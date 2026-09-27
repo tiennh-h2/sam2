@@ -50,7 +50,6 @@ class BatchedVideoDatapoint:
     metadata: BatchedVideoMetaData
 
     dict_key: str
-    tile_locations: Optional[torch.Tensor] = None  # [T,B,4], parent-ROI normalized bounds
 
     tile_locations: Optional[torch.FloatTensor] = None
 
@@ -180,5 +179,3 @@ def collate_fn(
         dict_key=dict_key,
         batch_size=[T],
     )
-
-# SAM2_TILE_LOCATION_V1

@@ -343,7 +343,6 @@ class SAM2ImagePredictor:
         multimask_output: bool = True,
         return_logits: bool = False,
         img_idx: int = -1,
-        tile_location=None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Predict masks for the given input prompts, using the currently set image.
@@ -409,10 +408,6 @@ class SAM2ImagePredictor:
             boxes=None,
             masks=mask_input,
         )
-        from sam2.tile_location import append_tile_location
-        sparse_embeddings = append_tile_location(
-            self.model.tile_location_encoder, sparse_embeddings, tile_location
-        )
 
         # Predict masks
         batched_mode = (
@@ -469,5 +464,3 @@ class SAM2ImagePredictor:
         self._features = None
         self._orig_hw = None
         self._is_batch = False
-
-# SAM2_TILE_LOCATION_V1

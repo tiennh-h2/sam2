@@ -1,0 +1,662 @@
+From a2db2dfb8579b16980275f96833cbf83a7cc5276 Mon Sep 17 00:00:00 2001
+Date: Fri, 25 Sep 2026 17:34:42 +0900
+Subject: [PATCH] Add image-only entity queries for SAM 2
+
+---
+ docs/entity_query_images.md                   |  27 ++++
+ .../plans/2026-09-25-entity-query-images.md   |  56 ++++++++
+ .../2026-09-25-entity-query-images-design.md  |  23 ++++
+ sam2/modeling/entity_query.py                 | 111 +++++++++++++++
+ tests/test_entity_query.py                    |  73 ++++++++++
+ tests/test_entity_query_data.py               |  32 +++++
+ tests/test_entity_query_slices.py             |  14 ++
+ tools/entity_query_slices.py                  | 115 ++++++++++++++++
+ training/entity_query_images.py               | 129 ++++++++++++++++++
+ 9 files changed, 580 insertions(+)
+ create mode 100644 docs/entity_query_images.md
+ create mode 100644 docs/superpowers/plans/2026-09-25-entity-query-images.md
+ create mode 100644 docs/superpowers/specs/2026-09-25-entity-query-images-design.md
+ create mode 100644 sam2/modeling/entity_query.py
+ create mode 100644 tests/test_entity_query.py
+ create mode 100644 tests/test_entity_query_data.py
+ create mode 100644 tests/test_entity_query_slices.py
+ create mode 100644 tools/entity_query_slices.py
+ create mode 100644 training/entity_query_images.py
+
+diff --git a/docs/entity_query_images.md b/docs/entity_query_images.md
+new file mode 100644
+index 0000000..1921282
+--- /dev/null
++++ b/docs/entity_query_images.md
+@@ -0,0 +1,27 @@
++# Image-only EntitySAM-style queries on SAM 2
++
++This extension adapts [EntitySAM's](https://github.com/ymq2017/entitysam) learned-query idea to SAM 2 image features. It is a separately trained query decoder; it does not load EntitySAM weights or change SAM 2's point/box APIs. Video tracking and merging the identities of instances across image slices are not part of this extension.
++
++From the SAM 2 repository root, with SAM 2 and SciPy installed (`pip install -e . scipy`), train on folders such as `DATA/train/example.png` and `DATA/train/_annotations.coco.json`:
++
++```bash
++python -m training.entity_query_images \
++  --data-root /path/to/DATA \
++  --model-cfg configs/sam2.1/sam2.1_hiera_b+.yaml \
++  --sam-checkpoint /path/to/sam2.1_hiera_base_plus.pt \
++  --output /path/to/entity_query.pt --epochs 20 --num-queries 50
++```
++
++The COCO file must list one category and contain polygon segmentations. Images with no annotations are valid background examples. A polygon that becomes empty after resize is ignored. Increase `--num-queries` when a training image has more valid instances than queries. By default the SAM 2 backbone is frozen; `--finetune-backbone` trains it and saves its weights in the query checkpoint.
++
++Run tiled prediction:
++
++```bash
++python -m tools.entity_query_slices \
++  --query-checkpoint /path/to/entity_query.pt \
++  --sam-checkpoint /path/to/sam2.1_hiera_base_plus.pt \
++  --img-dir /path/to/DATA/test --out-dir /path/to/slice_outputs \
++  --tile-size 1024 --overlap 256 --score-threshold 0.5
++```
++
++For every tile the script writes `image.png`, `overlay.png`, individual binary `mask_*.png` files, and `predictions.json` containing source image, slice coordinates, query indices, scores and mask filenames. Masks have the tile's original dimensions. The same query index on different tiles does not indicate the same instance.
+diff --git a/docs/superpowers/plans/2026-09-25-entity-query-images.md b/docs/superpowers/plans/2026-09-25-entity-query-images.md
+new file mode 100644
+index 0000000..9d2bcb5
+--- /dev/null
++++ b/docs/superpowers/plans/2026-09-25-entity-query-images.md
+@@ -0,0 +1,56 @@
++# Entity Query Images Implementation Plan
++
++> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
++
++**Goal:** Train and run prompt-free single-class instance discovery on image slices using SAM 2 features.
++
++**Architecture:** Frozen SAM 2 backbone with a separate learned query decoder and mask/objectness head; Hungarian mask matching. COCO polygons supply image training data, and tiled inference saves per-slice outputs.
++
++**Tech Stack:** Python, PyTorch, SAM 2, SciPy, Pillow.
++
++**Spec:** `docs/superpowers/specs/2026-09-25-entity-query-images-design.md`
++
++## Global Constraints
++
++- Input is single-class COCO polygon segmentation, including zero-instance images.
++- Existing interactive SAM 2 APIs remain compatible.
++- Trained query weights are required for prompt-free inference.
++- Slice identities are local; this milestone saves per-slice results.
++
++## Review Focus
++
++- Empty images yield finite objectness loss and no mask-match loss.
++- Degenerate polygons are excluded from matching.
++- Excess targets raise an actionable error.
++- Right and bottom border tiles keep their actual dimensions.
++- Background queries receive gradient without overwhelming positive queries.
++
++### Task 1: Query model and matching
++
++**Files:** Create `sam2/modeling/entity_query.py`; test `tests/test_entity_query.py`.
++
++**Interfaces:** `EntityQueryModel(sam_model, num_queries=50, freeze_backbone=True)` returns `{'pred_masks': BxQxHxW, 'pred_logits': BxQ}`; `entity_query_loss(outputs, targets)` returns a dict of differentiable losses.
++
++- [ ] Write tests for empty targets, matching, excess targets, forward shapes, and gradients; confirm they fail with a missing module.
++- [ ] Implement image feature extraction, query attention, mask/objectness projection, matching and losses.
++- [ ] Re-run focused tests; inspect class balance and target-mask resizing.
++
++### Task 2: COCO training entry point
++
++**Files:** Create `training/entity_query_images.py`; test `tests/test_entity_query_data.py`.
++
++**Interfaces:** `CocoInstanceDataset(root, split, image_size)`, `collate_instances`, `train` CLI.
++
++- [ ] Write and run a failing dataset test for polygons, empty images and invalid polygons.
++- [ ] Implement dataset, initialization, training loop and checkpoint metadata.
++- [ ] Re-run tests and check an example training invocation.
++
++### Task 3: Slice inference and usage
++
++**Files:** Create `tools/entity_query_slices.py`, `docs/entity_query_images.md`; test `tests/test_entity_query_slices.py`.
++
++**Interfaces:** `tile_boxes(width, height, size, overlap)` yields `(x0,y0,x1,y1)`; CLI takes SAM 2 backbone, trained head, image folder and output folder.
++
++- [ ] Write and run a failing boundary/overlap test.
++- [ ] Implement slice prediction, PNG/JSON dump and examples.
++- [ ] Re-run focused tests, Python compile, and smoke inference if dependencies and weights are available.
+diff --git a/docs/superpowers/specs/2026-09-25-entity-query-images-design.md b/docs/superpowers/specs/2026-09-25-entity-query-images-design.md
+new file mode 100644
+index 0000000..b64ac16
+--- /dev/null
++++ b/docs/superpowers/specs/2026-09-25-entity-query-images-design.md
+@@ -0,0 +1,23 @@
++# Prompt-free entity queries for SAM 2 images
++
++## Purpose
++
++Discover instances of the single foreground class in FBM image slices without points or boxes at inference. Train from COCO polygon instance masks, including valid images with zero instances. Save per-slice predictions for visual inspection.
++
++## Architecture
++
++Load an existing SAM 2 image checkpoint and use its image encoder and feature pyramid. A separate trainable head cross-attends a fixed number of learned queries to the lowest-resolution image features; each query predicts an objectness logit and a mask via a shared pixel projection. This adapts EntitySAM's query-based entity discovery and communication to still images. It deliberately omits temporal association, DINOv2 semantic encoding, and changes to SAM 2's interactive prompt decoder. Freeze the pretrained SAM 2 backbone by default; optional backbone fine-tuning is explicit.
++
++This is a new head initialized randomly. The stock checkpoint cannot directly perform prompt-free inference. Store the new head's weights, query count, SAM 2 config and checkpoint metadata in a separate checkpoint.
++
++## Data and optimization
++
++Read COCO polygon instances for one class. Resize image and mask together to SAM 2's square input, using the SAM 2 image normalization. Exclude zero-area instance masks from matching. Keep an image with no instances: every query learns background. Match queries to target instances per image using Hungarian assignment over soft mask BCE and Dice costs. Train matched masks with BCE and Dice, and all query objectness logits with binary cross entropy (background down-weighted). If there are more instances than queries, fail with a helpful message instead of silently dropping targets.
++
++## Inference
++
++Load the trained head together with the exact SAM 2 config and backbone checkpoint. Split each image into overlapping fixed-size slices; resize each slice to the encoder input, predict instance masks, reject low-objectness or empty masks, and save masks and colored overlays per slice. Record slice coordinates and scores as JSON; do not assume queries have stable identities across slices. Output masks in each slice's original resolution. Full-image identity merging is a separate problem and is outside this first image-only integration.
++
++## Verification
++
++Exercise matching and loss on empty and populated targets, verify foreground/background gradients, and test polygon rasterization and slice coordinates. Compile the Python files; run a training/inference smoke test when PyTorch, its SAM 2 dependencies and a pretrained checkpoint are present.
+diff --git a/sam2/modeling/entity_query.py b/sam2/modeling/entity_query.py
+new file mode 100644
+index 0000000..418f3ff
+--- /dev/null
++++ b/sam2/modeling/entity_query.py
+@@ -0,0 +1,111 @@
++"""Image-only, prompt-free instance queries on top of SAM 2 image features.
++
++The query head is deliberately independent of SAM 2's interactive mask decoder.
++It must be trained; an unmodified SAM 2 checkpoint does not contain these weights.
++"""
++
++from contextlib import nullcontext
++
++import torch
++from torch import nn
++from torch.nn import functional as F
++
++
++class EntityQueryHead(nn.Module):
++    def __init__(self, num_queries=50, hidden_dim=256, num_heads=8, num_layers=3):
++        super().__init__()
++        self.queries = nn.Embedding(num_queries, hidden_dim)
++        layer = nn.TransformerDecoderLayer(
++            d_model=hidden_dim, nhead=num_heads, dim_feedforward=hidden_dim * 4,
++            dropout=0.1, batch_first=True, activation="gelu",
++        )
++        self.decoder = nn.TransformerDecoder(layer, num_layers=num_layers)
++        self.mask_embed = nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.GELU(), nn.Linear(hidden_dim, hidden_dim))
++        self.pixel_embed = nn.Conv2d(hidden_dim, hidden_dim, 1)
++        self.objectness = nn.Linear(hidden_dim, 1)
++
++    def forward(self, image_features, image_pos, pixel_features):
++        batch = image_features.shape[0]
++        memory = (image_features + image_pos).flatten(2).transpose(1, 2)
++        queries = self.queries.weight.unsqueeze(0).expand(batch, -1, -1)
++        states = self.decoder(queries, memory)
++        masks = torch.einsum("bqc,bchw->bqhw", self.mask_embed(states), self.pixel_embed(pixel_features))
++        return {"pred_masks": masks, "pred_logits": self.objectness(states).squeeze(-1)}
++
++
++class EntityQueryModel(nn.Module):
++    def __init__(self, sam_model, num_queries=50, freeze_backbone=True):
++        super().__init__()
++        self.sam_model = sam_model
++        self.freeze_backbone = freeze_backbone
++        hidden_dim = sam_model.image_encoder.neck.d_model
++        self.query_head = EntityQueryHead(num_queries=num_queries, hidden_dim=hidden_dim)
++        if freeze_backbone:
++            for parameter in self.sam_model.parameters():
++                parameter.requires_grad_(False)
++            self.sam_model.eval()
++
++    def train(self, mode=True):
++        super().train(mode)
++        if self.freeze_backbone:
++            self.sam_model.eval()
++        return self
++
++    def forward(self, images):
++        context = torch.no_grad() if self.freeze_backbone else nullcontext()
++        with context:
++            features = self.sam_model.image_encoder(images)
++        return self.query_head(
++            features["backbone_fpn"][-1],
++            features["vision_pos_enc"][-1],
++            features["backbone_fpn"][0],
++        )
++
++
++def entity_query_loss(outputs, targets, background_weight=0.1):
++    """One-to-one mask matching; targets is a list of N x H x W binary masks."""
++    from scipy.optimize import linear_sum_assignment
++
++    pred_masks, pred_logits = outputs["pred_masks"], outputs["pred_logits"]
++    if pred_masks.ndim != 4 or pred_logits.shape != pred_masks.shape[:2]:
++        raise ValueError("Expected masks [B,Q,H,W] and logits [B,Q]")
++    if len(targets) != pred_masks.shape[0]:
++        raise ValueError("Expected one target tensor per image")
++    objectness_losses, mask_losses, dice_losses = [], [], []
++    for mask_logits, logits, target in zip(pred_masks, pred_logits, targets):
++        if target.ndim != 3:
++            raise ValueError("Each target must be [N,H,W]")
++        target = target.to(device=mask_logits.device, dtype=torch.float32)
++        if target.shape[0]:
++            target = F.interpolate(target[:, None], size=mask_logits.shape[-2:], mode="nearest")[:, 0]
++            target = target[target.flatten(1).any(1)]
++        n, q = target.shape[0], mask_logits.shape[0]
++        if n > q:
++            raise ValueError(f"Image has {n} targets but num_queries={q}; increase num_queries")
++        labels = logits.new_zeros((q,))
++        if n:
++            # Match at lower resolution to avoid Q x N x H x W temporary tensors.
++            size = (min(64, mask_logits.shape[-2]), min(64, mask_logits.shape[-1]))
++            small_pred = F.interpolate(mask_logits[:, None], size=size, mode="bilinear", align_corners=False)[:, 0]
++            small_target = F.interpolate(target[:, None], size=size, mode="nearest")[:, 0]
++            p, t = small_pred.flatten(1).detach(), small_target.flatten(1)
++            bce = (F.softplus(p).mean(-1)[:, None] - p @ t.T / p.shape[-1])
++            prob = p.sigmoid()
++            dice = 1 - (2 * prob @ t.T + 1) / (prob.sum(-1)[:, None] + t.sum(-1)[None] + 1)
++            rows, cols = linear_sum_assignment((bce + dice).float().cpu().numpy())
++            rows = torch.as_tensor(rows, device=logits.device)
++            cols = torch.as_tensor(cols, device=logits.device)
++            labels[rows] = 1
++            matched_pred, matched_target = mask_logits[rows], target[cols]
++            mask_losses.append(F.binary_cross_entropy_with_logits(matched_pred, matched_target))
++            probs = matched_pred.sigmoid().flatten(1)
++            t = matched_target.flatten(1)
++            dice_losses.append((1 - (2 * (probs * t).sum(1) + 1) / (probs.sum(1) + t.sum(1) + 1)).mean())
++        weights = labels + background_weight * (1 - labels)
++        objectness_losses.append((F.binary_cross_entropy_with_logits(logits, labels, reduction="none") * weights).sum() / weights.sum())
++    zero = pred_masks.sum() * 0
++    return {
++        "loss_objectness": torch.stack(objectness_losses).mean(),
++        "loss_mask": torch.stack(mask_losses).mean() if mask_losses else zero,
++        "loss_dice": torch.stack(dice_losses).mean() if dice_losses else zero,
++    }
+diff --git a/tests/test_entity_query.py b/tests/test_entity_query.py
+new file mode 100644
+index 0000000..298d65d
+--- /dev/null
++++ b/tests/test_entity_query.py
+@@ -0,0 +1,73 @@
++import unittest
++
++import torch
++
++from sam2.modeling.entity_query import EntityQueryHead, EntityQueryModel, entity_query_loss
++
++
++class EntityQueryTests(unittest.TestCase):
++    def test_empty_targets_train_background(self):
++        logits = torch.zeros(1, 3, requires_grad=True)
++        masks = torch.zeros(1, 3, 8, 8, requires_grad=True)
++        losses = entity_query_loss(
++            {"pred_logits": logits, "pred_masks": masks},
++            [torch.zeros(0, 8, 8)],
++        )
++        total = sum(losses.values())
++        self.assertTrue(torch.isfinite(total))
++        total.backward()
++        self.assertGreater(logits.grad.abs().sum().item(), 0)
++
++    def test_positive_target_trains_mask_and_objectness(self):
++        logits = torch.zeros(1, 3, requires_grad=True)
++        masks = torch.randn(1, 3, 8, 8, requires_grad=True)
++        target = torch.zeros(1, 8, 8)
++        target[:, 2:5, 2:5] = 1
++        total = sum(entity_query_loss(
++            {"pred_logits": logits, "pred_masks": masks}, [target]
++        ).values())
++        total.backward()
++        self.assertGreater(masks.grad.abs().sum().item(), 0)
++        self.assertGreater(logits.grad.abs().sum().item(), 0)
++
++    def test_excess_targets_are_rejected(self):
++        with self.assertRaisesRegex(ValueError, "num_queries"):
++            entity_query_loss(
++                {"pred_logits": torch.zeros(1, 1), "pred_masks": torch.zeros(1, 1, 4, 4)},
++                [torch.ones(2, 4, 4)],
++            )
++
++    def test_query_head_output_shapes(self):
++        head = EntityQueryHead(num_queries=4, hidden_dim=32, num_heads=4)
++        features = torch.randn(2, 32, 4, 4)
++        pos = torch.randn_like(features)
++        pixel = torch.randn(2, 32, 8, 8)
++        output = head(features, pos, pixel)
++        self.assertEqual(output["pred_masks"].shape, (2, 4, 8, 8))
++        self.assertEqual(output["pred_logits"].shape, (2, 4))
++
++    def test_model_uses_image_encoder_and_freezes_backbone(self):
++        from torch import nn
++
++        class Encoder(nn.Module):
++            def __init__(self):
++                super().__init__()
++                self.neck = nn.Module()
++                self.neck.d_model = 32
++                self.conv = nn.Conv2d(3, 32, 1)
++
++            def forward(self, images):
++                feature = self.conv(images)
++                return {"backbone_fpn": [feature, feature], "vision_pos_enc": [torch.zeros_like(feature), torch.zeros_like(feature)]}
++
++        class SAM(nn.Module):
++            def __init__(self):
++                super().__init__()
++                self.image_encoder = Encoder()
++
++        model = EntityQueryModel(SAM(), num_queries=2)
++        model.train()
++        output = model(torch.randn(1, 3, 4, 4))
++        self.assertEqual(output["pred_masks"].shape, (1, 2, 4, 4))
++        self.assertFalse(model.sam_model.training)
++        self.assertFalse(any(p.requires_grad for p in model.sam_model.parameters()))
+diff --git a/tests/test_entity_query_data.py b/tests/test_entity_query_data.py
+new file mode 100644
+index 0000000..c96c089
+--- /dev/null
++++ b/tests/test_entity_query_data.py
+@@ -0,0 +1,32 @@
++import json
++import tempfile
++import unittest
++from pathlib import Path
++
++from PIL import Image
++
++from training.entity_query_images import CocoInstanceDataset
++
++
++class CocoInstanceDatasetTests(unittest.TestCase):
++    def test_polygon_and_empty_image(self):
++        with tempfile.TemporaryDirectory() as root:
++            split = Path(root) / "train"
++            split.mkdir()
++            for image_id in (1, 2):
++                Image.new("RGB", (12, 8), "white").save(split / f"{image_id}.png")
++            coco = {
++                "images": [{"id": i, "file_name": f"{i}.png"} for i in (1, 2)],
++                "categories": [{"id": 1, "name": "pattern"}],
++                "annotations": [
++                    {"image_id": 1, "segmentation": [[1, 1, 6, 1, 6, 6, 1, 6]]},
++                    {"image_id": 1, "segmentation": [[2, 2, 2, 2, 2, 2]]},
++                ],
++            }
++            (split / "_annotations.coco.json").write_text(json.dumps(coco))
++            ds = CocoInstanceDataset(root, "train", image_size=32)
++            _, mask = ds[0]
++            self.assertEqual(mask.shape, (1, 32, 32))
++            self.assertGreater(mask.sum().item(), 0)
++            _, mask = ds[1]
++            self.assertEqual(mask.shape, (0, 32, 32))
+diff --git a/tests/test_entity_query_slices.py b/tests/test_entity_query_slices.py
+new file mode 100644
+index 0000000..b431d90
+--- /dev/null
++++ b/tests/test_entity_query_slices.py
+@@ -0,0 +1,14 @@
++import unittest
++
++from tools.entity_query_slices import tile_boxes
++
++
++class TilingTests(unittest.TestCase):
++    def test_border_and_overlap(self):
++        boxes = list(tile_boxes(2300, 700, size=1024, overlap=256))
++        self.assertEqual(boxes[0], (0, 0, 1024, 700))
++        self.assertEqual(boxes[-1], (1276, 0, 2300, 700))
++        self.assertEqual(len(boxes), len(set(boxes)))
++
++    def test_small_image(self):
++        self.assertEqual(list(tile_boxes(30, 20, size=1024, overlap=256)), [(0, 0, 30, 20)])
+diff --git a/tools/entity_query_slices.py b/tools/entity_query_slices.py
+new file mode 100644
+index 0000000..81a7514
+--- /dev/null
++++ b/tools/entity_query_slices.py
+@@ -0,0 +1,115 @@
++"""Dump EntityQueryModel predictions on overlapping image slices."""
++
++import argparse
++import json
++from pathlib import Path
++
++import numpy as np
++import torch
++from PIL import Image
++from torch.nn import functional as F
++
++from sam2.modeling.entity_query import EntityQueryModel
++from training.entity_query_images import encode_image
++
++
++def tile_boxes(width, height, size=1024, overlap=256):
++    if size <= 0 or not 0 <= overlap < size:
++        raise ValueError("Expected size > 0 and 0 <= overlap < size")
++
++    def positions(length):
++        if length <= size:
++            return [0]
++        starts = list(range(0, length - size + 1, size - overlap))
++        if starts[-1] != length - size:
++            starts.append(length - size)
++        return starts
++
++    for y in positions(height):
++        for x in positions(width):
++            yield x, y, min(x + size, width), min(y + size, height)
++
++
++def render_overlay(tile, instances):
++    rgb = np.asarray(tile.convert("RGB")).copy()
++    overlay = rgb.copy()
++    colors = np.random.default_rng(3).integers(50, 256, (max(1, len(instances)), 3), dtype=np.uint8)
++    for i, item in enumerate(instances):
++        mask = item["mask"]
++        overlay[mask] = colors[i]
++    return Image.fromarray((0.55 * rgb + 0.45 * overlay).astype(np.uint8))
++
++
++@torch.inference_mode()
++def predict_tile(model, tile, device, score_threshold, min_area):
++    image_size = model.sam_model.image_size
++    image = encode_image(tile, image_size).unsqueeze(0).to(device)
++    outputs = model(image)
++    indices = torch.nonzero(outputs["pred_logits"][0].sigmoid() >= score_threshold).flatten()
++    if not indices.numel():
++        return []
++    logits = F.interpolate(outputs["pred_masks"][0, indices, None].float(),
++                           size=(tile.height, tile.width), mode="bilinear", align_corners=False)[:, 0]
++    masks = logits > 0
++    scores = outputs["pred_logits"][0, indices].sigmoid()
++    instances = []
++    for index, score, mask in zip(indices.tolist(), scores.tolist(), masks.cpu().numpy()):
++        if int(mask.sum()) >= min_area:
++            instances.append({"query": index, "score": score, "mask": mask})
++    return sorted(instances, key=lambda item: -item["score"])
++
++
++def run(args):
++    from sam2.build_sam import build_sam2
++
++    checkpoint = torch.load(args.query_checkpoint, map_location="cpu", weights_only=False)
++    cfg = args.model_cfg or checkpoint["model_cfg"]
++    sam_checkpoint = args.sam_checkpoint or checkpoint["sam_checkpoint"]
++    sam_model = build_sam2(cfg, sam_checkpoint, device=args.device, apply_postprocessing=False)
++    if checkpoint.get("sam_backbone") is not None:
++        sam_model.load_state_dict(checkpoint["sam_backbone"], strict=True)
++    model = EntityQueryModel(sam_model, checkpoint["num_queries"]).to(args.device)
++    if model.sam_model.image_size != checkpoint["image_size"]:
++        raise ValueError("SAM 2 model image_size differs from the trained query checkpoint")
++    model.query_head.load_state_dict(checkpoint["query_head"], strict=True)
++    model.eval()
++    args.out_dir.mkdir(parents=True, exist_ok=True)
++    paths = sorted(p for p in args.img_dir.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".tif", ".tiff"})
++    for path in paths:
++        with Image.open(path) as image_file:
++            image = image_file.convert("RGB")
++        output = args.out_dir / path.stem
++        output.mkdir(parents=True, exist_ok=True)
++        for tile_id, (x0, y0, x1, y1) in enumerate(tile_boxes(*image.size, args.tile_size, args.overlap)):
++            tile = image.crop((x0, y0, x1, y1))
++            instances = predict_tile(model, tile, args.device, args.score_threshold, args.min_area)
++            tile_dir = output / f"tile_{tile_id:04d}"
++            tile_dir.mkdir(exist_ok=True)
++            tile.save(tile_dir / "image.png")
++            render_overlay(tile, instances).save(tile_dir / "overlay.png")
++            metadata = {"source": path.name, "box_xyxy": [x0, y0, x1, y1], "instances": []}
++            for instance_id, item in enumerate(instances):
++                filename = f"mask_{instance_id:03d}.png"
++                Image.fromarray(item["mask"].astype(np.uint8) * 255).save(tile_dir / filename)
++                metadata["instances"].append({"query": item["query"], "score": item["score"], "mask_file": filename})
++            (tile_dir / "predictions.json").write_text(json.dumps(metadata, indent=2))
++        print(f"wrote slices for {path.name}", flush=True)
++
++
++def parse_args():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--query-checkpoint", required=True, type=Path)
++    parser.add_argument("--model-cfg", help="Override SAM 2 config stored in query checkpoint")
++    parser.add_argument("--sam-checkpoint", type=Path, help="Override pretrained SAM 2 checkpoint path")
++    parser.add_argument("--img-dir", required=True, type=Path)
++    parser.add_argument("--out-dir", required=True, type=Path)
++    parser.add_argument("--tile-size", type=int, default=1024)
++    parser.add_argument("--overlap", type=int, default=256)
++    parser.add_argument("--score-threshold", type=float, default=0.5)
++    parser.add_argument("--min-area", type=int, default=16)
++    parser.add_argument("--device", default="cuda")
++    return parser.parse_args()
++
++
++if __name__ == "__main__":
++    run(parse_args())
+diff --git a/training/entity_query_images.py b/training/entity_query_images.py
+new file mode 100644
+index 0000000..18be43f
+--- /dev/null
++++ b/training/entity_query_images.py
+@@ -0,0 +1,129 @@
++"""Train prompt-free SAM 2 image queries from single-class COCO polygons."""
++
++import argparse
++import json
++from collections import defaultdict
++from pathlib import Path
++
++import numpy as np
++import torch
++from PIL import Image, ImageDraw
++from torch.utils.data import DataLoader, Dataset
++
++from sam2.modeling.entity_query import EntityQueryModel, entity_query_loss
++
++
++MEAN = torch.tensor([0.485, 0.456, 0.406])[:, None, None]
++STD = torch.tensor([0.229, 0.224, 0.225])[:, None, None]
++
++
++def encode_image(image, image_size):
++    """Resize RGB image exactly as SAM 2's image predictor does."""
++    image = image.convert("RGB").resize((image_size, image_size), Image.Resampling.BILINEAR)
++    return (torch.from_numpy(np.asarray(image).copy()).permute(2, 0, 1).float() / 255 - MEAN) / STD
++
++
++class CocoInstanceDataset(Dataset):
++    def __init__(self, root, split, image_size=1024):
++        self.image_dir = Path(root) / split
++        path = self.image_dir / "_annotations.coco.json"
++        data = json.loads(path.read_text())
++        if len(data.get("categories", [])) != 1:
++            raise ValueError("Expected one COCO category")
++        self.images = sorted(data["images"], key=lambda item: item["id"])
++        self.annotations = defaultdict(list)
++        for annotation in data["annotations"]:
++            if annotation.get("iscrowd", 0):
++                continue
++            self.annotations[annotation["image_id"]].append(annotation)
++        self.image_size = image_size
++
++    def __len__(self):
++        return len(self.images)
++
++    def __getitem__(self, index):
++        info = self.images[index]
++        with Image.open(self.image_dir / info["file_name"]) as file:
++            image = file.convert("RGB")
++        masks = []
++        for annotation in self.annotations[info["id"]]:
++            polygons = annotation.get("segmentation", [])
++            if not isinstance(polygons, list):
++                raise ValueError("COCO RLE masks are unsupported; expected polygon lists")
++            mask = Image.new("L", image.size, 0)
++            draw = ImageDraw.Draw(mask)
++            for coordinates in polygons:
++                if len(coordinates) >= 6 and len(coordinates) % 2 == 0:
++                    points = np.asarray(coordinates, dtype=np.float64).reshape(-1, 2)
++                    area_twice = np.dot(points[:, 0], np.roll(points[:, 1], -1)) - np.dot(points[:, 1], np.roll(points[:, 0], -1))
++                    if abs(area_twice) > 1e-8:
++                        draw.polygon([tuple(point) for point in points], fill=1)
++            mask = mask.resize((self.image_size, self.image_size), Image.Resampling.NEAREST)
++            array = np.asarray(mask).copy()
++            if array.any():
++                masks.append(torch.from_numpy(array).float())
++        target = torch.stack(masks) if masks else torch.zeros(0, self.image_size, self.image_size)
++        return encode_image(image, self.image_size), target
++
++
++def collate_instances(batch):
++    images, masks = zip(*batch)
++    return torch.stack(images), list(masks)
++
++
++def train(args):
++    from sam2.build_sam import build_sam2
++
++    device = torch.device(args.device)
++    sam_model = build_sam2(args.model_cfg, args.sam_checkpoint, device=args.device, apply_postprocessing=False)
++    model = EntityQueryModel(sam_model, args.num_queries, freeze_backbone=not args.finetune_backbone).to(device)
++    dataset = CocoInstanceDataset(args.data_root, args.split, sam_model.image_size)
++    loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True,
++                        num_workers=args.workers, collate_fn=collate_instances)
++    if not len(loader):
++        raise ValueError("Training split has no images")
++    parameters = [p for p in model.parameters() if p.requires_grad]
++    optimizer = torch.optim.AdamW(parameters, lr=args.lr, weight_decay=0.01)
++    args.output.parent.mkdir(parents=True, exist_ok=True)
++    for epoch in range(args.epochs):
++        model.train()
++        running = 0.0
++        for images, targets in loader:
++            images = images.to(device)
++            optimizer.zero_grad(set_to_none=True)
++            losses = entity_query_loss(model(images), targets)
++            loss = sum(losses.values())
++            loss.backward()
++            optimizer.step()
++            running += loss.item()
++        print(f"epoch {epoch + 1}/{args.epochs}: loss={running / len(loader):.5f}", flush=True)
++        torch.save({
++            "query_head": model.query_head.state_dict(),
++            "sam_backbone": model.sam_model.state_dict() if args.finetune_backbone else None,
++            "num_queries": args.num_queries,
++            "image_size": sam_model.image_size,
++            "model_cfg": args.model_cfg,
++            "sam_checkpoint": str(args.sam_checkpoint),
++            "epoch": epoch + 1,
++        }, args.output)
++
++
++def parse_args():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--data-root", type=Path, required=True)
++    parser.add_argument("--split", default="train")
++    parser.add_argument("--model-cfg", required=True)
++    parser.add_argument("--sam-checkpoint", type=Path, required=True)
++    parser.add_argument("--output", type=Path, required=True)
++    parser.add_argument("--num-queries", type=int, default=50)
++    parser.add_argument("--batch-size", type=int, default=1)
++    parser.add_argument("--epochs", type=int, default=20)
++    parser.add_argument("--lr", type=float, default=1e-4)
++    parser.add_argument("--workers", type=int, default=4)
++    parser.add_argument("--device", default="cuda")
++    parser.add_argument("--finetune-backbone", action="store_true")
++    return parser.parse_args()
++
++
++if __name__ == "__main__":
++    train(parse_args())
+-- 
+2.51.1
+

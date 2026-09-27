@@ -31,7 +31,7 @@ class VOSDataset(VisionDataset):
         training: bool,
         video_dataset: VOSRawDataset,
         sampler: VOSSampler,
-        multiplier: int,
+        multiplier: int=2,
         always_target=True,
         target_segments_available=True,
     ):

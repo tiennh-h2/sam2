@@ -180,8 +180,6 @@ class SAM2Base(torch.nn.Module):
             trunc_normal_(self.no_obj_embed_spatial, std=0.02)
 
         self._build_sam_heads()
-        from sam2.tile_location import TileLocationEncoder
-        self.tile_location_encoder = TileLocationEncoder(self.sam_prompt_embed_dim) if use_tile_location else None
         self.max_cond_frames_in_attn = max_cond_frames_in_attn
         self.use_tile_location = use_tile_location
 
@@ -345,11 +343,6 @@ class SAM2Base(torch.nn.Module):
             points=(sam_point_coords, sam_point_labels),
             boxes=None,
             masks=sam_mask_prompt,
-        )
-        from sam2.tile_location import append_tile_location
-        sparse_embeddings = append_tile_location(
-            self.tile_location_encoder, sparse_embeddings,
-            None if point_inputs is None else point_inputs.get("tile_location"),
         )
         (
             low_res_multimasks,
@@ -916,5 +909,3 @@ class SAM2Base(torch.nn.Module):
         # don't overlap (here sigmoid(-10.0)=4.5398e-05)
         pred_masks = torch.where(keep, pred_masks, torch.clamp(pred_masks, max=-10.0))
         return pred_masks
-
-# SAM2_TILE_LOCATION_V1

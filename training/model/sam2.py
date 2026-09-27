@@ -65,7 +65,10 @@ class SAM2Train(SAM2Base):
         # whether to forward image features per frame (as it's being tracked) during evaluation, instead of forwarding image features
         # of all frames at once. This avoids backbone OOM errors on very long videos in evaluation, but could be slightly slower.
         forward_backbone_per_frame_for_eval=False,
-        freeze_image_encoder=False,
+        freeze_image_encoder=True,
+        sample_all_correct_region=False,
+        points_per_side=None,
+        next_points_method=None,
         **kwargs,
     ):
         super().__init__(image_encoder, memory_attention, memory_encoder, **kwargs)
@@ -103,6 +106,12 @@ class SAM2Train(SAM2Base):
         if freeze_image_encoder:
             for p in self.image_encoder.parameters():
                 p.requires_grad = False
+
+        self.sample_all_correct_region = sample_all_correct_region
+        self.points_per_side = points_per_side
+        self.next_points_method = next_points_method
+        if self.next_points_method is None:
+            self.next_points_method = "uniform" if self.training else self.pt_sampling_for_eval
 
     def forward(self, input: BatchedVideoDatapoint):
         if self.training or not self.forward_backbone_per_frame_for_eval:
@@ -237,9 +246,9 @@ class SAM2Train(SAM2Base):
                     points, labels = get_next_point(
                         gt_masks=gt_masks_per_frame[t],
                         pred_masks=None,
-                        method=(
-                            "uniform" if self.training else self.pt_sampling_for_eval
-                        ),
+                        method=self.next_points_method,
+                        sample_all_correct_region=self.sample_all_correct_region,
+                        points_per_side=self.points_per_side
                     )
 
                 point_inputs = {"point_coords": points, "point_labels": labels}
@@ -402,7 +411,10 @@ class SAM2Train(SAM2Base):
         current_out["multistep_object_score_logits"] = [object_score_logits]
 
         # Optionally, sample correction points iteratively to correct the mask
-        if frame_idx in frames_to_add_correction_pt:
+        if (
+            frame_idx in frames_to_add_correction_pt
+            and self.num_correction_pt_per_frame > 0
+        ):
             point_inputs, final_sam_outputs = self._iter_correct_pt_sampling(
                 is_init_cond_frame,
                 point_inputs,

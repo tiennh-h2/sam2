@@ -1,0 +1,122 @@
+diff --git a/sam2/modeling/sam2_utils.py b/sam2/modeling/sam2_utils.py
+index e16caae..7befea2 100644
+--- a/sam2/modeling/sam2_utils.py
++++ b/sam2/modeling/sam2_utils.py
+@@ -199,7 +199,9 @@ def sample_box_points(
+     return box_coords, box_labels
+ 
+ 
+-def sample_random_points_from_errors(gt_masks, pred_masks, num_pt=1):
++def sample_random_points_from_errors(
++    gt_masks, pred_masks, num_pt=1, sample_all_correct_region=False,
++):
+     """
+     Sample `num_pt` random points (along with their labels) independently from the error regions.
+ 
+@@ -207,6 +209,10 @@ def sample_random_points_from_errors(gt_masks, pred_masks, num_pt=1):
+     - gt_masks: [B, 1, H_im, W_im] masks, dtype=torch.bool
+     - pred_masks: [B, 1, H_im, W_im] masks, dtype=torch.bool or None
+     - num_pt: int, number of points to sample independently for each of the B error maps
++    - sample_all_correct_region: bool. If True, ignore FP/FN error regions entirely and
++      sample every point uniformly from inside the ground-truth foreground (gt_masks),
++      always labeled positive (1). If False (default), sample from FP/FN error regions
++      as usual, falling back to a negative background click when there's no error.
+ 
+     Outputs:
+     - points: [B, num_pt, 2], dtype=torch.float, contains (x, y) coordinates of each sampled point
+@@ -222,6 +228,16 @@ def sample_random_points_from_errors(gt_masks, pred_masks, num_pt=1):
+     B, _, H_im, W_im = gt_masks.shape
+     device = gt_masks.device
+ 
++    if sample_all_correct_region:
++        noise = torch.rand(B, num_pt, H_im, W_im, device=device)
++        noise = noise * gt_masks  # zero out everything outside the gt foreground
++        pts_idx = noise.flatten(2).argmax(dim=2)
++        pts_x = pts_idx % W_im
++        pts_y = pts_idx // W_im
++        points = torch.stack([pts_x, pts_y], dim=2).to(torch.float)
++        labels = torch.ones(B, num_pt, dtype=torch.int32, device=device)
++        return points, labels
++
+     # false positive region, a new point sampled in this region should have
+     # negative label to correct the FP error
+     fp_masks = ~gt_masks & pred_masks
+@@ -232,12 +248,7 @@ def sample_random_points_from_errors(gt_masks, pred_masks, num_pt=1):
+     all_correct = torch.all((gt_masks == pred_masks).flatten(2), dim=2)
+     all_correct = all_correct[..., None, None]
+ 
+-    # channel 0 is FP map, while channel 1 is FN map
+     pts_noise = torch.rand(B, num_pt, H_im, W_im, 2, device=device)
+-    # sample a negative new click from FP region or a positive new click
+-    # from FN region, depend on where the maximum falls,
+-    # and in case the predictions are all correct (no FP or FN), we just
+-    # sample a negative click from the background region
+     pts_noise[..., 0] *= fp_masks | (all_correct & ~gt_masks)
+     pts_noise[..., 1] *= fn_masks
+     pts_idx = pts_noise.flatten(2).argmax(dim=2)
+@@ -314,9 +325,9 @@ def sample_one_point_from_error_center(gt_masks, pred_masks, padding=True):
+     return points, labels
+ 
+ 
+-def get_next_point(gt_masks, pred_masks, method):
++def get_next_point(gt_masks, pred_masks, method, sample_all_correct_region):
+     if method == "uniform":
+-        return sample_random_points_from_errors(gt_masks, pred_masks)
++        return sample_random_points_from_errors(gt_masks, pred_masks, sample_all_correct_region=sample_all_correct_region)
+     elif method == "center":
+         return sample_one_point_from_error_center(gt_masks, pred_masks)
+     else:
+diff --git a/training/dataset/vos_dataset.py b/training/dataset/vos_dataset.py
+index d1e9d39..50950fa 100644
+--- a/training/dataset/vos_dataset.py
++++ b/training/dataset/vos_dataset.py
+@@ -31,7 +31,7 @@ class VOSDataset(VisionDataset):
+         training: bool,
+         video_dataset: VOSRawDataset,
+         sampler: VOSSampler,
+-        multiplier: int,
++        multiplier: int=2,
+         always_target=True,
+         target_segments_available=True,
+     ):
+diff --git a/training/model/sam2.py b/training/model/sam2.py
+index ef7567c..cc08b21 100644
+--- a/training/model/sam2.py
++++ b/training/model/sam2.py
+@@ -66,6 +66,7 @@ class SAM2Train(SAM2Base):
+         # of all frames at once. This avoids backbone OOM errors on very long videos in evaluation, but could be slightly slower.
+         forward_backbone_per_frame_for_eval=False,
+         freeze_image_encoder=False,
++        sample_all_correct_region=False,
+         **kwargs,
+     ):
+         super().__init__(image_encoder, memory_attention, memory_encoder, **kwargs)
+@@ -104,6 +105,8 @@ class SAM2Train(SAM2Base):
+             for p in self.image_encoder.parameters():
+                 p.requires_grad = False
+ 
++        self.sample_all_correct_region = sample_all_correct_region
++
+     def forward(self, input: BatchedVideoDatapoint):
+         if self.training or not self.forward_backbone_per_frame_for_eval:
+             # precompute image features on all frames before tracking
+@@ -240,6 +243,7 @@ class SAM2Train(SAM2Base):
+                         method=(
+                             "uniform" if self.training else self.pt_sampling_for_eval
+                         ),
++                        sample_all_correct_region=self.sample_all_correct_region
+                     )
+ 
+                 point_inputs = {"point_coords": points, "point_labels": labels}
+@@ -402,7 +406,10 @@ class SAM2Train(SAM2Base):
+         current_out["multistep_object_score_logits"] = [object_score_logits]
+ 
+         # Optionally, sample correction points iteratively to correct the mask
+-        if frame_idx in frames_to_add_correction_pt:
++        if (
++            frame_idx in frames_to_add_correction_pt
++            and self.num_correction_pt_per_frame > 0
++        ):
+             point_inputs, final_sam_outputs = self._iter_correct_pt_sampling(
+                 is_init_cond_frame,
+                 point_inputs,
