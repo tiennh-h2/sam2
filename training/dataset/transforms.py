@@ -56,48 +56,55 @@ def get_size_with_aspect_ratio(image_size, size, max_size=None):
 
 
 def resize(datapoint, index, size, max_size=None, square=False, v2=False):
-    # size can be min_size (scalar) or (w, h) tuple
+    # A two-element size is supplied as (width, height).
+    # Torchvision resize expects (height, width).
+    frame = datapoint.frames[index]
+    image = frame.data
 
-    def get_size(image_size, size, max_size=None):
-        if isinstance(size, (list, tuple)):
-            return size[::-1]
-        else:
-            return get_size_with_aspect_ratio(image_size, size, max_size)
+    if isinstance(image, PILImage.Image):
+        original_size = image.size  # (width, height)
+    else:
+        original_size = (image.shape[-1], image.shape[-2])
 
     if square:
-        size = size, size
+        if not isinstance(size, int):
+            raise ValueError("square=True requires an integer size")
+        output_size = (size, size)
+    elif isinstance(size, (list, tuple)):
+        if len(size) != 2:
+            raise ValueError("size must contain (width, height)")
+        output_size = (size[1], size[0])
     else:
-        cur_size = (
-            datapoint.frames[index].data.size()[-2:][::-1]
-            if v2
-            else datapoint.frames[index].data.size
+        output_size = get_size_with_aspect_ratio(
+            original_size, size, max_size
         )
-        size = get_size(cur_size, size, max_size)
 
-    old_size = (
-        datapoint.frames[index].data.size()[-2:][::-1]
-        if v2
-        else datapoint.frames[index].data.size
-    )
-    if v2:
-        datapoint.frames[index].data = Fv2.resize(
-            datapoint.frames[index].data, size, antialias=True
+    if isinstance(image, PILImage.Image):
+        # PIL supports Lanczos downsampling.
+        frame.data = F.resize(
+            image,
+            output_size,
+            interpolation=InterpolationMode.LANCZOS,
         )
     else:
-        datapoint.frames[index].data = F.resize(datapoint.frames[index].data, size)
+        # Torchvision's tensor resize does not support Lanczos.
+        resize_image = Fv2.resize if v2 else F.resize
+        frame.data = resize_image(
+            image,
+            output_size,
+            interpolation=InterpolationMode.BICUBIC,
+            antialias=True,
+        )
 
-    new_size = (
-        datapoint.frames[index].data.size()[-2:][::-1]
-        if v2
-        else datapoint.frames[index].data.size
-    )
-
-    for obj in datapoint.frames[index].objects:
+    for obj in frame.objects:
         if obj.segment is not None:
-            obj.segment = F.resize(obj.segment[None, None], size).squeeze()
+            obj.segment = F.resize(
+                obj.segment[None, None],
+                output_size,
+                interpolation=InterpolationMode.NEAREST,
+            )[0, 0]
 
-    h, w = size
-    datapoint.frames[index].size = (h, w)
+    frame.size = tuple(output_size)  # (height, width)
     return datapoint
 
 

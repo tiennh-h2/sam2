@@ -23,7 +23,7 @@ from sam2_object_score_filter import enable_object_score_filter
 
 
 DEFAULT_CHECKPOINT = (
-    "/home/tien.nguyen/workspace/project/sam2/sam2_logs/configs/sam2.1_training/sam2.1_hiera_b+_FBM_finetune_sahi_points_only_with_neg_samples_2_with_eval.yaml/checkpoints/checkpoint.pt"
+    "/home/tien.nguyen/workspace/project/sam2/sam2_logs/configs/sam2.1_training/sam2.1_hiera_b+_FBM_finetune_sahi_points_only_with_neg_samples_3.yaml/checkpoints/checkpoint.pt"
 )
 DEFAULT_TEST_DIR = (
     "/home/tien.nguyen/workspace/project/common/data/fbm/commercial/specialty_segmentation_dataset_for_sam3_20260916/test/"
@@ -36,7 +36,7 @@ def parse_args():
     parser.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT)
     parser.add_argument("--model-cfg", default="configs/sam2.1/sam2.1_hiera_b+.yaml")
     parser.add_argument("--test-dir", type=Path, default=Path(DEFAULT_TEST_DIR))
-    parser.add_argument("--out-dir", type=Path, default=Path("outputs_neg_samples_2_with_eval"))
+    parser.add_argument("--out-dir", type=Path, default=Path("outputs_neg_samples_3"))
     parser.add_argument("--slice-size", type=int, default=2048)
     parser.add_argument("--overlap-ratio", type=float, default=0.2)
     parser.add_argument("--points-per-batch", type=int, default=64)
@@ -104,13 +104,13 @@ def main():
         args.model_cfg, args.checkpoint, device="cuda", apply_postprocessing=False
     )
 
-    enable_object_score_filter(sam2, min_object_score=0.5)
-    mask_generator = SAM2AutomaticMaskGenerator(
-        sam2, points_per_batch=args.points_per_batch,
-        points_per_side=16,
-        pred_iou_thresh=0.8, stability_score_thresh=0.95,
-        output_mode="binary_mask", use_m2m=False,
-    )
+    # enable_object_score_filter(sam2, min_object_score=0.5)
+    # mask_generator = SAM2AutomaticMaskGenerator(
+    #     sam2, points_per_batch=args.points_per_batch,
+    #     points_per_side=16,
+    #     pred_iou_thresh=0.8, stability_score_thresh=0.95,
+    #     output_mode="binary_mask", use_m2m=False,
+    # )
 
     mask_generator = SAM2AutomaticMaskGenerator(
         sam2, points_per_batch=args.points_per_batch, output_mode="binary_mask"

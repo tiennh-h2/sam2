@@ -69,6 +69,7 @@ class SAM2Train(SAM2Base):
         sample_all_correct_region=False,
         points_per_side=None,
         next_points_method=None,
+        max_num_sampler_objects=10,
         **kwargs,
     ):
         super().__init__(image_encoder, memory_attention, memory_encoder, **kwargs)
@@ -110,6 +111,7 @@ class SAM2Train(SAM2Base):
         self.sample_all_correct_region = sample_all_correct_region
         self.points_per_side = points_per_side
         self.next_points_method = next_points_method
+        self.max_num_sampler_objects = max_num_sampler_objects
         if self.next_points_method is None:
             self.next_points_method = "uniform" if self.training else self.pt_sampling_for_eval
 

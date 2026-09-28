@@ -66,6 +66,7 @@ trainer:
     sample_all_correct_region: True
     grid_points_per_side: 32
     max_ratio_of_negative_objs: 1
+    max_num_sampler_objects: ${scratch.max_num_objects}
     image_encoder:
       _target_: sam2.modeling.backbones.image_encoder.ImageEncoder
       scalp: 1

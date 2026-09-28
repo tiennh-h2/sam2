@@ -71,10 +71,11 @@ class RandomUniformSampler(VOSSampler):
             if retry >= MAX_RETRIES - 1:
                 raise Exception("No visible objects")
 
-        object_ids = random.sample(
-            visible_object_ids,
-            min(len(visible_object_ids), self.max_num_objects),
-        )
+        object_ids = visible_object_ids
+        # object_ids = random.sample(
+        #     visible_object_ids,
+        #     min(len(visible_object_ids), self.max_num_objects),
+        # )
         return SampledFramesAndObjects(frames=frames, object_ids=object_ids)
 
 

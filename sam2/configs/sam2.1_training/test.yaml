@@ -23,32 +23,32 @@ vos:
   train_transforms:
     - _target_: training.dataset.transforms.ComposeAPI
       transforms:
-        - _target_: training.dataset.transforms.RandomHorizontalFlip
-          consistent_transform: True
-        - _target_: training.dataset.transforms.RandomAffine
-          degrees: 25
-          shear: 20
-          image_interpolation: bilinear
-          consistent_transform: True
+        # - _target_: training.dataset.transforms.RandomHorizontalFlip
+        #   consistent_transform: True
+        # - _target_: training.dataset.transforms.RandomAffine
+        #   degrees: 25
+        #   shear: 20
+        #   image_interpolation: bilinear
+        #   consistent_transform: True
         - _target_: training.dataset.transforms.RandomResizeAPI
           sizes: ${scratch.resolution}
           square: true
           consistent_transform: True
-        - _target_: training.dataset.transforms.ColorJitter
-          consistent_transform: True
-          brightness: 0.1
-          contrast: 0.03
-          saturation: 0.03
-          hue: null
-        - _target_: training.dataset.transforms.RandomGrayscale
-          p: 0.05
-          consistent_transform: True
-        - _target_: training.dataset.transforms.ColorJitter
-          consistent_transform: False
-          brightness: 0.1
-          contrast: 0.05
-          saturation: 0.05
-          hue: null
+        # - _target_: training.dataset.transforms.ColorJitter
+        #   consistent_transform: True
+        #   brightness: 0.1
+        #   contrast: 0.03
+        #   saturation: 0.03
+        #   hue: null
+        # - _target_: training.dataset.transforms.RandomGrayscale
+        #   p: 0.05
+        #   consistent_transform: True
+        # - _target_: training.dataset.transforms.ColorJitter
+        #   consistent_transform: False
+        #   brightness: 0.1
+        #   contrast: 0.05
+        #   saturation: 0.05
+        #   hue: null
         - _target_: training.dataset.transforms.ToTensorAPI
         - _target_: training.dataset.transforms.NormalizeAPI
           mean: [0.485, 0.456, 0.406]
@@ -66,6 +66,7 @@ trainer:
     sample_all_correct_region: True
     grid_points_per_side: 32
     max_ratio_of_negative_objs: 1
+    max_num_sampler_objects: ${scratch.max_num_objects}
     image_encoder:
       _target_: sam2.modeling.backbones.image_encoder.ImageEncoder
       scalp: 1
@@ -221,32 +222,32 @@ trainer:
           num_frames: 1
           max_num_objects: ${scratch.max_num_objects}
         transforms:
-        - _target_: training.dataset.transforms.RandomHorizontalFlip
-          consistent_transform: True
-        - _target_: training.dataset.transforms.RandomAffine
-          degrees: 25
-          shear: 20
-          image_interpolation: bilinear
-          consistent_transform: True
+        # - _target_: training.dataset.transforms.RandomHorizontalFlip
+        #   consistent_transform: True
+        # - _target_: training.dataset.transforms.RandomAffine
+        #   degrees: 25
+        #   shear: 20
+        #   image_interpolation: bilinear
+        #   consistent_transform: True
         - _target_: training.dataset.transforms.RandomResizeAPI
           sizes: ${scratch.resolution}
           square: true
           consistent_transform: True
-        - _target_: training.dataset.transforms.ColorJitter
-          consistent_transform: True
-          brightness: 0.1
-          contrast: 0.03
-          saturation: 0.03
-          hue: null
-        - _target_: training.dataset.transforms.RandomGrayscale
-          p: 0.05
-          consistent_transform: True
-        - _target_: training.dataset.transforms.ColorJitter
-          consistent_transform: False
-          brightness: 0.1
-          contrast: 0.05
-          saturation: 0.05
-          hue: null
+        # - _target_: training.dataset.transforms.ColorJitter
+        #   consistent_transform: True
+        #   brightness: 0.1
+        #   contrast: 0.03
+        #   saturation: 0.03
+        #   hue: null
+        # - _target_: training.dataset.transforms.RandomGrayscale
+        #   p: 0.05
+        #   consistent_transform: True
+        # - _target_: training.dataset.transforms.ColorJitter
+        #   consistent_transform: False
+        #   brightness: 0.1
+        #   contrast: 0.05
+        #   saturation: 0.05
+        #   hue: null
         - _target_: training.dataset.transforms.ToTensorAPI
         - _target_: training.dataset.transforms.NormalizeAPI
           mean: [0.485, 0.456, 0.406]

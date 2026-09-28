@@ -126,6 +126,7 @@ class VOSDataset(VisionDataset):
             frames=images,
             video_id=video.video_id,
             size=(h, w),
+            name=video.video_name,
         )
 
     def __getitem__(self, idx):

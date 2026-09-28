@@ -16,7 +16,7 @@ from typing import List, Optional, Tuple, Union
 import torch
 
 from PIL import Image as PILImage
-from tensordict import tensorclass
+from tensordict import MetaData, tensorclass
 
 
 @tensorclass
@@ -53,6 +53,7 @@ class BatchedVideoDatapoint:
     tile_locations: Optional[torch.Tensor] = None  # [T,B,4], parent-ROI normalized bounds
 
     tile_locations: Optional[torch.FloatTensor] = None
+    img_names: Optional[List[str]] = None
 
     def pin_memory(self, device=None):
         return self.apply(torch.Tensor.pin_memory, device=device)
@@ -112,6 +113,7 @@ class VideoDatapoint:
     frames: List[Frame]
     video_id: int
     size: Tuple[int, int]
+    name: str = None
 
 
 def collate_fn(
@@ -124,6 +126,7 @@ def collate_fn(
         dict_key (str): A string key used to identify the batch.
     """
     img_batch = []
+    img_names = [video.name for video in batch]
     for video in batch:
         img_batch += [torch.stack([frame.data for frame in video.frames], dim=0)]
 
@@ -179,6 +182,7 @@ def collate_fn(
         ),
         dict_key=dict_key,
         batch_size=[T],
+        img_names=MetaData(tuple(img_names), batch_size=[T]),
     )
 
 # SAM2_TILE_LOCATION_V1
