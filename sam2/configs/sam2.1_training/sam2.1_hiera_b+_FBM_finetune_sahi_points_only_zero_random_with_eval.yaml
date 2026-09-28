@@ -82,6 +82,7 @@ trainer:
       multimask_output: true
   model:
     _target_: training.model.grid_negative_sam2.GridNegativeSAM2Train
+    next_points_method: zero
     sample_all_correct_region: True
     max_ratio_of_negative_objs: 1
     image_encoder:

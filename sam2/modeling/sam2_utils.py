@@ -200,7 +200,7 @@ def sample_box_points(
 
 
 def sample_random_points_from_errors(
-    gt_masks, pred_masks, num_pt=1, sample_all_correct_region=False, points_per_side=None,
+    gt_masks, pred_masks, num_pt=1, sample_all_correct_region=False,
 ):
     """
     Sample `num_pt` random points (along with their labels) independently from the error regions.
@@ -213,13 +213,6 @@ def sample_random_points_from_errors(
       sample every point uniformly from inside the ground-truth foreground (gt_masks),
       always labeled positive (1). If False (default), sample from FP/FN error regions
       as usual, falling back to a negative background click when there's no error.
-    - points_per_side: int or None. If set, points are laid out on an evenly-spaced
-      points_per_side x points_per_side grid over the image (same convention as
-      SAM's automatic mask generator: points_per_side**2 total candidate points).
-      Sampling prioritizes picking a point from this grid that falls inside the
-      target region; if the region contains no grid point (for a given
-      batch/point sample), falls back to a uniformly random point from that
-      region, same as when points_per_side is None.
 
     Outputs:
     - points: [B, num_pt, 2], dtype=torch.float, contains (x, y) coordinates of each sampled point
@@ -235,33 +228,9 @@ def sample_random_points_from_errors(
     B, _, H_im, W_im = gt_masks.shape
     device = gt_masks.device
 
-    grid_mask = None
-    if points_per_side is not None and points_per_side is not False and int(points_per_side) > 0:
-        points_per_side = int(points_per_side)
-        offset = 1.0 / (2 * points_per_side)
-        pts_1d = torch.linspace(offset, 1 - offset, points_per_side, device=device)
-        grid_x = (pts_1d * W_im).long().clamp_(0, W_im - 1)  # [points_per_side]
-        grid_y = (pts_1d * H_im).long().clamp_(0, H_im - 1)  # [points_per_side]
-        grid_mask = torch.zeros(H_im, W_im, dtype=torch.bool, device=device)
-        grid_mask[grid_y[:, None], grid_x[None, :]] = True
-
-    def _prioritize_grid(region_noise):
-        """
-        region_noise: [B, num_pt, H_im, W_im] float, already zeroed outside the
-        target region. Returns noise restricted to grid points inside the region
-        when that intersection is non-empty (per batch/point sample), else the
-        original region_noise unchanged.
-        """
-        if grid_mask is None:
-            return region_noise
-        grid_noise = region_noise * grid_mask
-        has_grid_pt = grid_noise.flatten(2).sum(dim=2) > 0  # [B, num_pt]
-        return torch.where(has_grid_pt[..., None, None], grid_noise, region_noise)
-
     if sample_all_correct_region:
         noise = torch.rand(B, num_pt, H_im, W_im, device=device)
         noise = noise * gt_masks  # zero out everything outside the gt foreground
-        noise = _prioritize_grid(noise)
         pts_idx = noise.flatten(2).argmax(dim=2)
         pts_x = pts_idx % W_im
         pts_y = pts_idx // W_im
@@ -282,9 +251,6 @@ def sample_random_points_from_errors(
     pts_noise = torch.rand(B, num_pt, H_im, W_im, 2, device=device)
     pts_noise[..., 0] *= fp_masks | (all_correct & ~gt_masks)
     pts_noise[..., 1] *= fn_masks
-    if grid_mask is not None:
-        pts_noise[..., 0] = _prioritize_grid(pts_noise[..., 0])
-        pts_noise[..., 1] = _prioritize_grid(pts_noise[..., 1])
     pts_idx = pts_noise.flatten(2).argmax(dim=2)
     labels = (pts_idx % 2).to(torch.int32)
     pts_idx = pts_idx // 2
@@ -358,10 +324,9 @@ def sample_one_point_from_error_center(gt_masks, pred_masks, padding=True):
     labels = labels.to(device)
     return points, labels
 
-
 def get_next_point(gt_masks, pred_masks, method, sample_all_correct_region=False, points_per_side=None):
     if method == "uniform":
-        return sample_random_points_from_errors(gt_masks, pred_masks, sample_all_correct_region=sample_all_correct_region, points_per_side=points_per_side)
+        return sample_random_points_from_errors(gt_masks, pred_masks, sample_all_correct_region=sample_all_correct_region)
     elif method == "center":
         return sample_one_point_from_error_center(gt_masks, pred_masks)
     else:
