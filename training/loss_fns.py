@@ -13,6 +13,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from training.trainer import CORE_LOSS_KEY
+from sam2.modeling.target_point_classifier import (
+    negative_decoder_losses,
+    point_classification_loss,
+)
 
 from training.utils.distributed import get_world_size, is_dist_avail_and_initialized
 
@@ -134,6 +138,9 @@ class MultiStepMultiMasksAndIous(nn.Module):
         pred_obj_scores=False,
         focal_gamma_obj_score=0.0,
         focal_alpha_obj_score=-1,
+        target_point_grid_size=32,
+        target_point_boundary_ignore=2,
+        target_point_gamma=2.0,
     ):
         """
         This class computes the multi-step multi-mask and IoU losses.
@@ -163,6 +170,9 @@ class MultiStepMultiMasksAndIous(nn.Module):
         self.supervise_all_iou = supervise_all_iou
         self.iou_use_l1_loss = iou_use_l1_loss
         self.pred_obj_scores = pred_obj_scores
+        self.target_point_grid_size = target_point_grid_size
+        self.target_point_boundary_ignore = target_point_boundary_ignore
+        self.target_point_gamma = target_point_gamma
 
     def forward(self, outs_batch: List[Dict], targets_batch: torch.Tensor):
         assert len(outs_batch) == len(targets_batch)
@@ -176,6 +186,30 @@ class MultiStepMultiMasksAndIous(nn.Module):
         losses = defaultdict(int)
         for outs, targets in zip(outs_batch, targets_batch):
             cur_losses = self._forward(outs, targets, num_objects)
+            if "loss_target_point" in self.weight_dict and "target_point_logits" not in outs:
+                raise ValueError("The model must enable target_point_classifier")
+            if "target_point_logits" in outs:
+                if "loss_target_point" not in self.weight_dict:
+                    raise ValueError("Set weight_dict.loss_target_point for the target point classifier")
+                cur_losses["loss_target_point"] = point_classification_loss(
+                    outs["target_point_logits"],
+                    outs["target_point_union"],
+                    grid_size=self.target_point_grid_size,
+                    boundary_ignore=self.target_point_boundary_ignore,
+                    gamma=self.target_point_gamma,
+                )
+            negative_keys = ("loss_negative_mask", "loss_negative_iou", "loss_negative_class")
+            if "negative_point_predictions" in outs:
+                if not self.pred_obj_scores or not all(k in self.weight_dict for k in negative_keys):
+                    raise ValueError("Non-target clicks require pred_obj_scores and all negative loss weights")
+                negative_losses = negative_decoder_losses(*outs["negative_point_predictions"])
+                cur_losses.update(zip(negative_keys, negative_losses))
+            elif any(k in self.weight_dict for k in negative_keys):
+                # An image can have no available off-target grid point.
+                zero = targets.sum().float() * 0
+                cur_losses.update({k: zero for k in negative_keys})
+            if CORE_LOSS_KEY not in cur_losses:
+                cur_losses[CORE_LOSS_KEY] = self.reduce_loss(cur_losses)
             for k, v in cur_losses.items():
                 losses[k] += v
 
@@ -212,7 +246,10 @@ class MultiStepMultiMasksAndIous(nn.Module):
             self._update_losses(
                 losses, src_masks, target_masks, ious, num_objects, object_score_logits
             )
-        losses[CORE_LOSS_KEY] = self.reduce_loss(losses)
+        if not any(k in self.weight_dict for k in (
+            "loss_target_point", "loss_negative_mask", "loss_negative_iou", "loss_negative_class"
+        )):
+            losses[CORE_LOSS_KEY] = self.reduce_loss(losses)
         return losses
 
     def _update_losses(

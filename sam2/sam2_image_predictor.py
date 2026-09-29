@@ -115,6 +115,7 @@ class SAM2ImagePredictor:
         ), f"input_image must be of size 1x3xHxW, got {input_image.shape}"
         logging.info("Computing image embeddings for the provided image...")
         backbone_out = self.model.forward_image(input_image)
+        self._target_point_logits = backbone_out.get("target_point_logits")
         _, vision_feats, _, _ = self.model._prepare_backbone_features(backbone_out)
         # Add no_mem_embed, which is added to the lowest rest feat. map during training on videos
         if self.model.directly_add_no_mem_embed:
@@ -158,6 +159,7 @@ class SAM2ImagePredictor:
         ), f"img_batch must be of size Bx3xHxW, got {img_batch.shape}"
         logging.info("Computing image embeddings for the provided images...")
         backbone_out = self.model.forward_image(img_batch)
+        self._target_point_logits = backbone_out.get("target_point_logits")
         _, vision_feats, _, _ = self.model._prepare_backbone_features(backbone_out)
         # Add no_mem_embed, which is added to the lowest rest feat. map during training on videos
         if self.model.directly_add_no_mem_embed:
@@ -462,5 +464,6 @@ class SAM2ImagePredictor:
         """
         self._is_image_set = False
         self._features = None
+        self._target_point_logits = None
         self._orig_hw = None
         self._is_batch = False

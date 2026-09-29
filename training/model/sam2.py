@@ -10,6 +10,10 @@ import numpy as np
 import torch
 import torch.distributed
 from sam2.modeling.sam2_base import SAM2Base
+from sam2.modeling.target_point_classifier import (
+    sample_negative_grid_points,
+    union_masks_per_image,
+)
 from sam2.modeling.sam2_utils import (
     get_1d_sine_pe,
     get_next_point,
@@ -66,11 +70,17 @@ class SAM2Train(SAM2Base):
         # of all frames at once. This avoids backbone OOM errors on very long videos in evaluation, but could be slightly slower.
         forward_backbone_per_frame_for_eval=False,
         freeze_image_encoder=False,
+        negative_points_per_image=0,
+        negative_grid_size=32,
         **kwargs,
     ):
         super().__init__(image_encoder, memory_attention, memory_encoder, **kwargs)
         self.use_act_ckpt_iterative_pt_sampling = use_act_ckpt_iterative_pt_sampling
         self.forward_backbone_per_frame_for_eval = forward_backbone_per_frame_for_eval
+        self.negative_points_per_image = negative_points_per_image
+        self.negative_grid_size = negative_grid_size
+        if negative_points_per_image < 0 or negative_grid_size < 1:
+            raise ValueError("Invalid negative point sampling configuration")
 
         # Point sampler and conditioning frames
         self.prob_to_use_pt_input_for_train = prob_to_use_pt_input_for_train
@@ -105,7 +115,7 @@ class SAM2Train(SAM2Base):
                 p.requires_grad = False
 
     def forward(self, input: BatchedVideoDatapoint):
-        if self.training or not self.forward_backbone_per_frame_for_eval:
+        if self.training or not self.forward_backbone_per_frame_for_eval or self.target_point_classifier is not None:
             # precompute image features on all frames before tracking
             backbone_out = self.forward_image(input.flat_img_batch)
         else:
@@ -113,6 +123,38 @@ class SAM2Train(SAM2Base):
             backbone_out = {"backbone_fpn": None, "vision_pos_enc": None}
         backbone_out = self.prepare_prompt_inputs(backbone_out, input)
         previous_stages_out = self.forward_tracking(backbone_out, input)
+
+        if self.training and self.negative_points_per_image:
+            if input.num_frames != 1:
+                raise ValueError("Non-target positive-click training currently supports single-frame images")
+            target_union = union_masks_per_image(
+                input.masks[0], input.obj_to_frame_idx[0, :, 1], input.num_videos
+            )
+            image_ids, negative_points = sample_negative_grid_points(
+                target_union, self.negative_grid_size, self.negative_points_per_image
+            )
+            if len(image_ids):
+                image_features = backbone_out["backbone_fpn"][-1][image_ids]
+                if self.directly_add_no_mem_embed:
+                    image_features = image_features + self.no_mem_embed.view(1, -1, 1, 1)
+                high_res = (
+                    [level[image_ids] for level in backbone_out["backbone_fpn"][:-1]]
+                    if self.use_high_res_features_in_sam else None
+                )
+                _, high_masks, ious, _, _, _, object_scores = self._forward_sam_heads(
+                    backbone_features=image_features,
+                    point_inputs={
+                        "point_coords": negative_points[:, None],
+                        "point_labels": torch.ones(
+                            len(image_ids), 1, dtype=torch.int32, device=image_ids.device
+                        ),
+                    },
+                    high_res_features=high_res,
+                    multimask_output=False,
+                )
+                previous_stages_out[0]["negative_point_predictions"] = (
+                    high_masks, ious, object_scores
+                )
 
         return previous_stages_out
 
@@ -326,6 +368,18 @@ class SAM2Train(SAM2Base):
                 output_dict=output_dict,
                 num_frames=num_frames,
             )
+            if "target_point_logits" in backbone_out:
+                frame_image_ids = torch.arange(
+                    input.num_videos, device=input.masks.device
+                ) * input.num_frames + stage_id
+                current_out["target_point_logits"] = backbone_out[
+                    "target_point_logits"
+                ][frame_image_ids]
+                current_out["target_point_union"] = union_masks_per_image(
+                    input.masks[stage_id],
+                    input.obj_to_frame_idx[stage_id, :, 1],
+                    input.num_videos,
+                )
             # Append the output, depending on whether it's a conditioning frame
             add_output_as_cond_frame = stage_id in init_cond_frames or (
                 self.add_all_frames_to_correct_as_cond

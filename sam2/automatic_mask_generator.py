@@ -53,6 +53,8 @@ class SAM2AutomaticMaskGenerator:
         output_mode: str = "binary_mask",
         use_m2m: bool = False,
         multimask_output: bool = True,
+        target_point_threshold: Optional[float] = None,
+        target_point_min_points: int = 1,
         **kwargs,
     ) -> None:
         """
@@ -101,11 +103,16 @@ class SAM2AutomaticMaskGenerator:
             memory.
           use_m2m (bool): Whether to add a one step refinement using previous mask predictions.
           multimask_output (bool): Whether to output multimask at each point of the grid.
+          target_point_threshold (float or None): If set, classify grid points before
+            mask decoding and keep points at or above this target probability.
+          target_point_min_points (int): Minimum number of fallback prompts per crop.
         """
 
         assert (points_per_side is None) != (
             point_grids is None
         ), "Exactly one of points_per_side or point_grid must be provided."
+        if target_point_threshold is not None and target_point_min_points < 1:
+            raise ValueError("target_point_min_points must be at least 1 for crop processing")
         if points_per_side is not None:
             self.point_grids = build_all_layer_point_grids(
                 points_per_side,
@@ -148,6 +155,8 @@ class SAM2AutomaticMaskGenerator:
         self.output_mode = output_mode
         self.use_m2m = use_m2m
         self.multimask_output = multimask_output
+        self.target_point_threshold = target_point_threshold
+        self.target_point_min_points = target_point_min_points
 
     @classmethod
     def from_pretrained(cls, model_id: str, **kwargs) -> "SAM2AutomaticMaskGenerator":
@@ -264,6 +273,21 @@ class SAM2AutomaticMaskGenerator:
         # Get points for this crop
         points_scale = np.array(cropped_im_size)[None, ::-1]
         points_for_image = self.point_grids[crop_layer_idx] * points_scale
+        if self.target_point_threshold is not None:
+            from sam2.modeling.target_point_classifier import select_target_points
+
+            logits = self.predictor._target_point_logits
+            if logits is None:
+                raise ValueError("The model must enable target_point_classifier and load its trained weights")
+            points_tensor = torch.as_tensor(
+                points_for_image, device=logits.device, dtype=logits.dtype
+            )
+            keep = select_target_points(
+                logits, points_tensor, cropped_im_size,
+                threshold=self.target_point_threshold,
+                min_points=self.target_point_min_points,
+            )
+            points_for_image = points_for_image[keep.cpu().numpy()]
 
         # Generate masks for this crop in batches
         data = MaskData()

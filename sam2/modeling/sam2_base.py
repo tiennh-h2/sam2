@@ -14,6 +14,7 @@ from sam2.modeling.sam.mask_decoder import MaskDecoder
 from sam2.modeling.sam.prompt_encoder import PromptEncoder
 from sam2.modeling.sam.transformer import TwoWayTransformer
 from sam2.modeling.sam2_utils import get_1d_sine_pe, MLP, select_closest_cond_frames
+from sam2.modeling.target_point_classifier import TargetPointClassifier
 
 # a large negative value as a placeholder score for missing objects
 NO_OBJ_SCORE = -1024.0
@@ -93,11 +94,16 @@ class SAM2Base(torch.nn.Module):
         # extra arguments used to construct the SAM mask decoder; if not None, it should be a dict of kwargs to be passed into `MaskDecoder` class.
         sam_mask_decoder_extra_args=None,
         compile_image_encoder: bool = False,
+        target_point_classifier: bool = False,
     ):
         super().__init__()
 
         # Part 1: the image backbone
         self.image_encoder = image_encoder
+        self.target_point_classifier = (
+            TargetPointClassifier(image_encoder.neck.d_model)
+            if target_point_classifier else None
+        )
         # Use level 0, 1, 2 for high-res setting, or just level 2 for the default setting
         self.use_high_res_features_in_sam = use_high_res_features_in_sam
         self.num_feature_levels = 3 if use_high_res_features_in_sam else 1
@@ -467,6 +473,11 @@ class SAM2Base(torch.nn.Module):
     def forward_image(self, img_batch: torch.Tensor):
         """Get the image feature on the input batch."""
         backbone_out = self.image_encoder(img_batch)
+        if self.target_point_classifier is not None:
+            # Level 0 has the neck's channels before decoder projection.
+            backbone_out["target_point_logits"] = self.target_point_classifier(
+                backbone_out["backbone_fpn"][0]
+            )
         if self.use_high_res_features_in_sam:
             # precompute projected level 0 and level 1 features in SAM decoder
             # to avoid running it again on every SAM click
