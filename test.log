@@ -1,0 +1,964 @@
+###################### Train App Config ####################
+scratch:
+  resolution: 1024
+  train_batch_size: 2
+  num_train_workers: 4
+  num_frames: 1
+  max_num_objects: 10
+  base_lr: 5.0e-06
+  vision_lr: 3.0e-06
+  phases_per_epoch: 1
+  num_epochs: 40
+dataset:
+  img_folder: /home/tien.nguyen/workspace/project/common/data/fbm/commercial/test/images/train
+  gt_folder: /home/tien.nguyen/workspace/project/common/data/fbm/commercial/test/masks/train
+  file_list_txt: null
+  multiplier: 2
+vos:
+  train_transforms:
+  - _target_: training.dataset.transforms.ComposeAPI
+    transforms:
+    - _target_: training.dataset.transforms.RandomHorizontalFlip
+      consistent_transform: true
+    - _target_: training.dataset.transforms.RandomAffine
+      degrees: 25
+      shear: 20
+      image_interpolation: bilinear
+      consistent_transform: true
+    - _target_: training.dataset.transforms.RandomResizeAPI
+      sizes: ${scratch.resolution}
+      square: true
+      consistent_transform: true
+    - _target_: training.dataset.transforms.ColorJitter
+      consistent_transform: true
+      brightness: 0.1
+      contrast: 0.03
+      saturation: 0.03
+      hue: null
+    - _target_: training.dataset.transforms.RandomGrayscale
+      p: 0.05
+      consistent_transform: true
+    - _target_: training.dataset.transforms.ColorJitter
+      consistent_transform: false
+      brightness: 0.1
+      contrast: 0.05
+      saturation: 0.05
+      hue: null
+    - _target_: training.dataset.transforms.ToTensorAPI
+    - _target_: training.dataset.transforms.NormalizeAPI
+      mean:
+      - 0.485
+      - 0.456
+      - 0.406
+      std:
+      - 0.229
+      - 0.224
+      - 0.225
+trainer:
+  _target_: training.trainer.Trainer
+  mode: train_only
+  max_epochs: ${times:${scratch.num_epochs},${scratch.phases_per_epoch}}
+  accelerator: cuda
+  seed_value: 123
+  model:
+    _target_: training.model.grid_negative_sam2.GridNegativeSAM2Train
+    sample_all_correct_region: true
+    grid_points_per_side: 32
+    max_ratio_of_negative_objs: 1
+    max_num_sampler_objects: ${scratch.max_num_objects}
+    image_encoder:
+      _target_: sam2.modeling.backbones.image_encoder.ImageEncoder
+      scalp: 1
+      trunk:
+        _target_: sam2.modeling.backbones.hieradet.Hiera
+        embed_dim: 112
+        num_heads: 2
+        drop_path_rate: 0.1
+      neck:
+        _target_: sam2.modeling.backbones.image_encoder.FpnNeck
+        position_encoding:
+          _target_: sam2.modeling.position_encoding.PositionEmbeddingSine
+          num_pos_feats: 256
+          normalize: true
+          scale: null
+          temperature: 10000
+        d_model: 256
+        backbone_channel_list:
+        - 896
+        - 448
+        - 224
+        - 112
+        fpn_top_down_levels:
+        - 2
+        - 3
+        fpn_interp_model: nearest
+    memory_attention:
+      _target_: sam2.modeling.memory_attention.MemoryAttention
+      d_model: 256
+      pos_enc_at_input: true
+      layer:
+        _target_: sam2.modeling.memory_attention.MemoryAttentionLayer
+        activation: relu
+        dim_feedforward: 2048
+        dropout: 0.1
+        pos_enc_at_attn: false
+        self_attention:
+          _target_: sam2.modeling.sam.transformer.RoPEAttention
+          rope_theta: 10000.0
+          feat_sizes:
+          - 64
+          - 64
+          embedding_dim: 256
+          num_heads: 1
+          downsample_rate: 1
+          dropout: 0.1
+        d_model: 256
+        pos_enc_at_cross_attn_keys: true
+        pos_enc_at_cross_attn_queries: false
+        cross_attention:
+          _target_: sam2.modeling.sam.transformer.RoPEAttention
+          rope_theta: 10000.0
+          feat_sizes:
+          - 64
+          - 64
+          rope_k_repeat: true
+          embedding_dim: 256
+          num_heads: 1
+          downsample_rate: 1
+          dropout: 0.1
+          kv_in_dim: 64
+      num_layers: 4
+    memory_encoder:
+      _target_: sam2.modeling.memory_encoder.MemoryEncoder
+      out_dim: 64
+      position_encoding:
+        _target_: sam2.modeling.position_encoding.PositionEmbeddingSine
+        num_pos_feats: 64
+        normalize: true
+        scale: null
+        temperature: 10000
+      mask_downsampler:
+        _target_: sam2.modeling.memory_encoder.MaskDownSampler
+        kernel_size: 3
+        stride: 2
+        padding: 1
+      fuser:
+        _target_: sam2.modeling.memory_encoder.Fuser
+        layer:
+          _target_: sam2.modeling.memory_encoder.CXBlock
+          dim: 256
+          kernel_size: 7
+          padding: 3
+          layer_scale_init_value: 1.0e-06
+          use_dwconv: true
+        num_layers: 2
+    num_maskmem: 7
+    image_size: ${scratch.resolution}
+    sigmoid_scale_for_mem_enc: 20.0
+    sigmoid_bias_for_mem_enc: -10.0
+    use_mask_input_as_output_without_sam: true
+    directly_add_no_mem_embed: true
+    no_obj_embed_spatial: true
+    use_high_res_features_in_sam: true
+    multimask_output_in_sam: true
+    iou_prediction_use_sigmoid: true
+    use_obj_ptrs_in_encoder: true
+    add_tpos_enc_to_obj_ptrs: true
+    proj_tpos_enc_in_obj_ptrs: true
+    use_signed_tpos_enc_to_obj_ptrs: true
+    only_obj_ptrs_in_the_past_for_eval: true
+    pred_obj_scores: true
+    pred_obj_scores_mlp: true
+    fixed_no_obj_ptr: true
+    multimask_output_for_tracking: true
+    use_multimask_token_for_obj_ptr: true
+    multimask_min_pt_num: 0
+    multimask_max_pt_num: 1
+    use_mlp_for_obj_ptr_proj: true
+    prob_to_use_pt_input_for_train: 1.0
+    prob_to_use_pt_input_for_eval: 0.0
+    prob_to_use_box_input_for_train: 0.0
+    prob_to_use_box_input_for_eval: 0.0
+    prob_to_sample_from_gt_for_train: 0.1
+    num_frames_to_correct_for_train: 1
+    num_frames_to_correct_for_eval: 1
+    rand_frames_to_correct_for_train: false
+    add_all_frames_to_correct_as_cond: true
+    num_init_cond_frames_for_train: 1
+    rand_init_cond_frames_for_train: false
+    num_correction_pt_per_frame: 0
+    use_act_ckpt_iterative_pt_sampling: false
+    num_init_cond_frames_for_eval: 1
+    forward_backbone_per_frame_for_eval: true
+  data:
+    train:
+      _target_: training.dataset.sam2_datasets.TorchTrainMixedDataset
+      phases_per_epoch: ${scratch.phases_per_epoch}
+      batch_sizes:
+      - ${scratch.train_batch_size}
+      datasets:
+      - _target_: training.dataset.vos_dataset.VOSDataset
+        training: true
+        multiplier: ${dataset.multiplier}
+        video_dataset:
+          _target_: training.dataset.vos_raw_dataset.PNGRawDataset
+          img_folder: ${dataset.img_folder}
+          gt_folder: ${dataset.gt_folder}
+          file_list_txt: null
+        sampler:
+          _target_: training.dataset.vos_sampler.RandomUniformSampler
+          num_frames: 1
+          max_num_objects: ${scratch.max_num_objects}
+        transforms:
+        - _target_: training.dataset.transforms.RandomHorizontalFlip
+          consistent_transform: true
+        - _target_: training.dataset.transforms.RandomAffine
+          degrees: 25
+          shear: 20
+          image_interpolation: bilinear
+          consistent_transform: true
+        - _target_: training.dataset.transforms.RandomResizeAPI
+          sizes: ${scratch.resolution}
+          square: true
+          consistent_transform: true
+        - _target_: training.dataset.transforms.ColorJitter
+          consistent_transform: true
+          brightness: 0.1
+          contrast: 0.03
+          saturation: 0.03
+          hue: null
+        - _target_: training.dataset.transforms.RandomGrayscale
+          p: 0.05
+          consistent_transform: true
+        - _target_: training.dataset.transforms.ColorJitter
+          consistent_transform: false
+          brightness: 0.1
+          contrast: 0.05
+          saturation: 0.05
+          hue: null
+        - _target_: training.dataset.transforms.ToTensorAPI
+        - _target_: training.dataset.transforms.NormalizeAPI
+          mean:
+          - 0.485
+          - 0.456
+          - 0.406
+          std:
+          - 0.229
+          - 0.224
+          - 0.225
+        - _target_: training.dataset.grid_negative_targets.AddGridNegativeTarget
+          probability: 1.0
+          max_ratio_of_negative_objs: 1
+      shuffle: true
+      num_workers: ${scratch.num_train_workers}
+      pin_memory: true
+      drop_last: true
+      collate_fn:
+        _target_: training.utils.data_utils.collate_fn
+        _partial_: true
+        dict_key: all
+  optim:
+    amp:
+      enabled: true
+      amp_dtype: bfloat16
+    optimizer:
+      _target_: torch.optim.AdamW
+    gradient_clip:
+      _target_: training.optimizer.GradientClipper
+      max_norm: 0.1
+      norm_type: 2
+    param_group_modifiers:
+    - _target_: training.optimizer.layer_decay_param_modifier
+      _partial_: true
+      layer_decay_value: 0.9
+      apply_to: image_encoder.trunk
+      overrides:
+      - pattern: '*pos_embed*'
+        value: 1.0
+    options:
+      lr:
+      - scheduler:
+          _target_: fvcore.common.param_scheduler.CosineParamScheduler
+          start_value: ${scratch.base_lr}
+          end_value: ${divide:${scratch.base_lr},10}
+      - scheduler:
+          _target_: fvcore.common.param_scheduler.CosineParamScheduler
+          start_value: ${scratch.vision_lr}
+          end_value: ${divide:${scratch.vision_lr},10}
+        param_names:
+        - image_encoder.*
+      weight_decay:
+      - scheduler:
+          _target_: fvcore.common.param_scheduler.ConstantParamScheduler
+          value: 0.1
+      - scheduler:
+          _target_: fvcore.common.param_scheduler.ConstantParamScheduler
+          value: 0.0
+        param_names:
+        - '*bias*'
+        module_cls_names:
+        - torch.nn.LayerNorm
+  loss:
+    all:
+      _target_: training.loss_fns.MultiStepMultiMasksAndIous
+      weight_dict:
+        loss_mask: 20
+        loss_dice: 1
+        loss_iou: 1
+        loss_class: 1
+      supervise_all_iou: true
+      iou_use_l1_loss: true
+      pred_obj_scores: true
+      focal_gamma_obj_score: 0.0
+      focal_alpha_obj_score: -1.0
+  distributed:
+    backend: nccl
+    find_unused_parameters: true
+  logging:
+    tensorboard_writer:
+      _target_: training.utils.logger.make_tensorboard_logger
+      log_dir: ${launcher.experiment_log_dir}/tensorboard
+      flush_secs: 120
+      should_log: true
+    log_dir: ${launcher.experiment_log_dir}/logs
+    log_freq: 10
+  checkpoint:
+    save_dir: ${launcher.experiment_log_dir}/checkpoints
+    save_freq: 0
+    model_weight_initializer:
+      _partial_: true
+      _target_: training.utils.checkpoint_utils.load_state_dict_into_model
+      strict: true
+      ignore_unexpected_keys: null
+      ignore_missing_keys: null
+      state_dict:
+        _target_: training.utils.checkpoint_utils.load_checkpoint_and_apply_kernels
+        checkpoint_path: ./checkpoints/sam2.1_hiera_base_plus.pt
+        ckpt_state_dict_keys:
+        - model
+launcher:
+  num_nodes: 1
+  gpus_per_node: 8
+  experiment_log_dir: /data1/workspace/tien.nguyen/project/sam2/sam2_logs/configs/sam2.1_training/test.yaml
+submitit:
+  partition: null
+  account: null
+  qos: null
+  cpus_per_task: 10
+  use_cluster: false
+  timeout_hour: 24
+  name: null
+  port_range:
+  - 10000
+  - 65000
+
+############################################################
+INFO 2026-09-28 22:43:03,274 train_utils.py: 108: MACHINE SEED: 4920
+INFO 2026-09-28 22:43:03,277 train_utils.py: 154: Logging ENV_VARIABLES
+INFO 2026-09-28 22:43:03,277 train_utils.py: 155: BASH_FUNC__module_raw%%=() {  eval `/usr/bin/tclsh8.6 /usr/lib/x86_64-linux-gnu/modulecmd.tcl bash "$@"`;
+ _mlstatus=$?;
+ return $_mlstatus
+}
+BASH_FUNC_ml%%=() {  module ml "$@"
+}
+BASH_FUNC_module%%=() {  _module_raw "$@" 2>&1
+}
+CONDA_DEFAULT_ENV=sam2
+CONDA_EXE=/data1/workspace/tien.nguyen/miniconda3/bin/conda
+CONDA_PREFIX=/data1/workspace/tien.nguyen/miniconda3/envs/sam2
+CONDA_PREFIX_1=/data1/workspace/tien.nguyen/miniconda3
+CONDA_PREFIX_2=/data1/workspace/tien.nguyen/miniconda3/envs/sam2
+CONDA_PREFIX_3=/data1/workspace/tien.nguyen/miniconda3/envs/sam3
+CONDA_PROMPT_MODIFIER=(sam2) 
+CONDA_PYTHON_EXE=/data1/workspace/tien.nguyen/miniconda3/bin/python
+CONDA_SHLVL=4
+CUDA_VISIBLE_DEVICES=7
+DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1006/bus
+GOROOT=/opt/go/1.23.3
+HOME=/home/tien.nguyen
+HYDRA_FULL_ERROR=1
+LANG=en_US
+LANGUAGE=en_US
+LC_ALL=en_US.UTF-8
+LD_LIBRARY_PATH=/opt/slurm/22.05.2/lib
+LESSCLOSE=/usr/bin/lesspipe %s %s
+LESSOPEN=| /usr/bin/lesspipe %s
+LIBVIRT_DEFAULT_URI=qemu:///system
+LOADEDMODULES=go/1.23.3:singularity/4.2.2:slurm/22.05.2
+LOCAL_RANK=0
+LOGNAME=tien.nguyen
+LS_COLORS=rs=0:di=01;34:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:mi=00:su=37;41:sg=30;43:ca=30;41:tw=30;42:ow=34;42:st=37;44:ex=01;32:*.tar=01;31:*.tgz=01;31:*.arc=01;31:*.arj=01;31:*.taz=01;31:*.lha=01;31:*.lz4=01;31:*.lzh=01;31:*.lzma=01;31:*.tlz=01;31:*.txz=01;31:*.tzo=01;31:*.t7z=01;31:*.zip=01;31:*.z=01;31:*.dz=01;31:*.gz=01;31:*.lrz=01;31:*.lz=01;31:*.lzo=01;31:*.xz=01;31:*.zst=01;31:*.tzst=01;31:*.bz2=01;31:*.bz=01;31:*.tbz=01;31:*.tbz2=01;31:*.tz=01;31:*.deb=01;31:*.rpm=01;31:*.jar=01;31:*.war=01;31:*.ear=01;31:*.sar=01;31:*.rar=01;31:*.alz=01;31:*.ace=01;31:*.zoo=01;31:*.cpio=01;31:*.7z=01;31:*.rz=01;31:*.cab=01;31:*.wim=01;31:*.swm=01;31:*.dwm=01;31:*.esd=01;31:*.jpg=01;35:*.jpeg=01;35:*.mjpg=01;35:*.mjpeg=01;35:*.gif=01;35:*.bmp=01;35:*.pbm=01;35:*.pgm=01;35:*.ppm=01;35:*.tga=01;35:*.xbm=01;35:*.xpm=01;35:*.tif=01;35:*.tiff=01;35:*.png=01;35:*.svg=01;35:*.svgz=01;35:*.mng=01;35:*.pcx=01;35:*.mov=01;35:*.mpg=01;35:*.mpeg=01;35:*.m2v=01;35:*.mkv=01;35:*.webm=01;35:*.webp=01;35:*.ogm=01;35:*.mp4=01;35:*.m4v=01;35:*.mp4v=01;35:*.vob=01;35:*.qt=01;35:*.nuv=01;35:*.wmv=01;35:*.asf=01;35:*.rm=01;35:*.rmvb=01;35:*.flc=01;35:*.avi=01;35:*.fli=01;35:*.flv=01;35:*.gl=01;35:*.dl=01;35:*.xcf=01;35:*.xwd=01;35:*.yuv=01;35:*.cgm=01;35:*.emf=01;35:*.ogv=01;35:*.ogx=01;35:*.aac=00;36:*.au=00;36:*.flac=00;36:*.m4a=00;36:*.mid=00;36:*.midi=00;36:*.mka=00;36:*.mp3=00;36:*.mpc=00;36:*.ogg=00;36:*.ra=00;36:*.wav=00;36:*.oga=00;36:*.opus=00;36:*.spx=00;36:*.xspf=00;36:
+MANPATH=/home/tien.nguyen/.nvm/versions/node/v24.14.0/share/man:/opt/slurm/22.05.2/share/man:/usr/local/share/man:/usr/share/man
+MASTER_ADDR=localhost
+MASTER_PORT=60632
+MAX_JOBS=8
+MODULEPATH=/etc/environment-modules/modules:/usr/share/modules/versions:/usr/share/modules/modulefiles:/opt/modulefiles:/opt/nvidia/hpc_sdk/modulefiles:/opt/intel/oneapi/modulefiles
+MODULESHOME=/usr/share/modules
+MODULES_AUTO_HANDLING=1
+MODULES_CMD=/usr/lib/x86_64-linux-gnu/modulecmd.tcl
+MODULES_VERBOSITY=concise
+MOTD_SHOWN=pam
+NVM_BIN=/home/tien.nguyen/.nvm/versions/node/v24.14.0/bin
+NVM_CD_FLAGS=
+NVM_DIR=/home/tien.nguyen/.nvm
+NVM_INC=/home/tien.nguyen/.nvm/versions/node/v24.14.0/include/node
+PATH=/home/tien.nguyen/.local/bin:/home/tien.nguyen/.local/bin:/home/tien.nguyen/.local/share/VSCode-linux-x64/bin:/home/tien.nguyen/.local/bin:/home/tien.nguyen/.cargo/bin:/home/tien.nguyen/.local/bin:/home/tien.nguyen/.local/share/VSCode-linux-x64/bin:/home/tien.nguyen/.nvm/versions/node/v24.14.0/bin:/data1/workspace/tien.nguyen/miniconda3/envs/sam2/bin:/data1/workspace/tien.nguyen/miniconda3/condabin:/opt/slurm/22.05.2/bin:/opt/singularity/4.2.2/bin:/opt/go/1.23.3/bin:/opt/go/1.23.3/pkg/tool/linux_amd64:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+PS1=(sam2) ${debian_chroot:+($debian_chroot)}\u@\h:\w\$ 
+PWD=/data1/workspace/tien.nguyen/project/sam2
+RANK=0
+SALLOC_ACCOUNT=tien.nguyen
+SHELL=/bin/bash
+SHLVL=1
+SLURM_ROOT=/opt/slurm/22.05.2
+SSH_CLIENT=10.30.1.55 58882 22
+SSH_CONNECTION=10.30.1.55 58882 192.168.100.9 22
+SSH_TTY=/dev/pts/51
+TERM=screen
+TERM_PROGRAM=tmux
+TERM_PROGRAM_VERSION=3.2a
+TMUX=/tmp/tmux-1006/default,1407625,2
+TMUX_PANE=%9
+TORCHINDUCTOR_CACHE_DIR=/tmp/torchinductor_tien.nguyen
+TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+USER=tien.nguyen
+UV_INDEX_INTERNAL_AWS_USERNAME=aws
+UV_KEYRING_PROVIDER=subprocess
+WORLD_SIZE=1
+XDG_DATA_DIRS=/usr/share/gnome:/usr/local/share:/usr/share:/var/lib/snapd/desktop
+XDG_RUNTIME_DIR=/run/user/1006
+XDG_SESSION_CLASS=user
+XDG_SESSION_ID=508
+XDG_SESSION_TYPE=tty
+_=/data1/workspace/tien.nguyen/miniconda3/envs/sam2/bin/python
+_CE_CONDA=
+_CE_M=
+_CONDA_EXE=/data1/workspace/tien.nguyen/miniconda3/bin/conda
+_CONDA_ROOT=/data1/workspace/tien.nguyen/miniconda3
+_LMFILES_=/opt/modulefiles/go/1.23.3:/opt/modulefiles/singularity/4.2.2:/opt/modulefiles/slurm/22.05.2
+__MODULES_LMALTNAME=go/1.23.3&as|go/default&as|go/latest:singularity/4.2.2&as|singularity/default&as|singularity/latest:slurm/22.05.2&as|slurm/default&as|slurm/latest
+__MODULES_LMPREREQ=singularity/4.2.2&go/1.23.3
+__MODULES_LMTAG=go/1.23.3&auto-loaded
+
+INFO 2026-09-28 22:43:03,278 trainer.py: 989: Setting up components: Model, loss, optim, meters etc.
+INFO 2026-09-28 22:43:03,279 logger.py:  66: TensorBoard SummaryWriter instantiated. Files will be stored in: /data1/workspace/tien.nguyen/project/sam2/sam2_logs/configs/sam2.1_training/test.yaml/tensorboard
+INFO 2026-09-28 22:43:03,785 sam2.py:  85: Training with points (sampled from masks) as inputs with p=1.0
+INFO 2026-09-28 22:43:03,789 trainer.py:1059: ====================
+INFO 2026-09-28 22:43:03,789 trainer.py:1060: Summary for model <class 'training.model.grid_negative_sam2.GridNegativeSAM2Train'>
+INFO 2026-09-28 22:43:03,791 trainer.py:1061: Model is GridNegativeSAM2Train(
+  (image_encoder): ImageEncoder(
+    (trunk): Hiera(
+      (patch_embed): PatchEmbed(
+        (proj): Conv2d(3, 112, kernel_size=(7, 7), stride=(4, 4), padding=(3, 3))
+      )
+      (blocks): ModuleList(
+        (0): MultiScaleBlock(
+          (norm1): LayerNorm((112,), eps=1e-06, elementwise_affine=True, bias=True)
+          (attn): MultiScaleAttention(
+            (qkv): Linear(in_features=112, out_features=336, bias=True)
+            (proj): Linear(in_features=112, out_features=112, bias=True)
+          )
+          (drop_path): Identity()
+          (norm2): LayerNorm((112,), eps=1e-06, elementwise_affine=True, bias=True)
+          (mlp): MLP(
+            (layers): ModuleList(
+              (0): Linear(in_features=112, out_features=448, bias=True)
+              (1): Linear(in_features=448, out_features=112, bias=True)
+            )
+            (act): GELU(approximate='none')
+          )
+        )
+        (1): MultiScaleBlock(
+          (norm1): LayerNorm((112,), eps=1e-06, elementwise_affine=True, bias=True)
+          (attn): MultiScaleAttention(
+            (qkv): Linear(in_features=112, out_features=336, bias=True)
+            (proj): Linear(in_features=112, out_features=112, bias=True)
+          )
+          (drop_path): DropPath()
+          (norm2): LayerNorm((112,), eps=1e-06, elementwise_affine=True, bias=True)
+          (mlp): MLP(
+            (layers): ModuleList(
+              (0): Linear(in_features=112, out_features=448, bias=True)
+              (1): Linear(in_features=448, out_features=112, bias=True)
+            )
+            (act): GELU(approximate='none')
+          )
+        )
+        (2): MultiScaleBlock(
+          (norm1): LayerNorm((112,), eps=1e-06, elementwise_affine=True, bias=True)
+          (pool): MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0, dilation=1, ceil_mode=False)
+          (attn): MultiScaleAttention(
+            (q_pool): MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0, dilation=1, ceil_mode=False)
+            (qkv): Linear(in_features=112, out_features=672, bias=True)
+            (proj): Linear(in_features=224, out_features=224, bias=True)
+          )
+          (drop_path): DropPath()
+          (norm2): LayerNorm((224,), eps=1e-06, elementwise_affine=True, bias=True)
+          (mlp): MLP(
+            (layers): ModuleList(
+              (0): Linear(in_features=224, out_features=896, bias=True)
+              (1): Linear(in_features=896, out_features=224, bias=True)
+            )
+            (act): GELU(approximate='none')
+          )
+          (proj): Linear(in_features=112, out_features=224, bias=True)
+        )
+        (3-4): 2 x MultiScaleBlock(
+          (norm1): LayerNorm((224,), eps=1e-06, elementwise_affine=True, bias=True)
+          (attn): MultiScaleAttention(
+            (qkv): Linear(in_features=224, out_features=672, bias=True)
+            (proj): Linear(in_features=224, out_features=224, bias=True)
+          )
+          (drop_path): DropPath()
+          (norm2): LayerNorm((224,), eps=1e-06, elementwise_affine=True, bias=True)
+          (mlp): MLP(
+            (layers): ModuleList(
+              (0): Linear(in_features=224, out_features=896, bias=True)
+              (1): Linear(in_features=896, out_features=224, bias=True)
+            )
+            (act): GELU(approximate='none')
+          )
+        )
+        (5): MultiScaleBlock(
+          (norm1): LayerNorm((224,), eps=1e-06, elementwise_affine=True, bias=True)
+          (pool): MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0, dilation=1, ceil_mode=False)
+          (attn): MultiScaleAttention(
+            (q_pool): MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0, dilation=1, ceil_mode=False)
+            (qkv): Linear(in_features=224, out_features=1344, bias=True)
+            (proj): Linear(in_features=448, out_features=448, bias=True)
+          )
+          (drop_path): DropPath()
+          (norm2): LayerNorm((448,), eps=1e-06, elementwise_affine=True, bias=True)
+          (mlp): MLP(
+            (layers): ModuleList(
+              (0): Linear(in_features=448, out_features=1792, bias=True)
+              (1): Linear(in_features=1792, out_features=448, bias=True)
+            )
+            (act): GELU(approximate='none')
+          )
+          (proj): Linear(in_features=224, out_features=448, bias=True)
+        )
+        (6-20): 15 x MultiScaleBlock(
+          (norm1): LayerNorm((448,), eps=1e-06, elementwise_affine=True, bias=True)
+          (attn): MultiScaleAttention(
+            (qkv): Linear(in_features=448, out_features=1344, bias=True)
+            (proj): Linear(in_features=448, out_features=448, bias=True)
+          )
+          (drop_path): DropPath()
+          (norm2): LayerNorm((448,), eps=1e-06, elementwise_affine=True, bias=True)
+          (mlp): MLP(
+            (layers): ModuleList(
+              (0): Linear(in_features=448, out_features=1792, bias=True)
+              (1): Linear(in_features=1792, out_features=448, bias=True)
+            )
+            (act): GELU(approximate='none')
+          )
+        )
+        (21): MultiScaleBlock(
+          (norm1): LayerNorm((448,), eps=1e-06, elementwise_affine=True, bias=True)
+          (pool): MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0, dilation=1, ceil_mode=False)
+          (attn): MultiScaleAttention(
+            (q_pool): MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0, dilation=1, ceil_mode=False)
+            (qkv): Linear(in_features=448, out_features=2688, bias=True)
+            (proj): Linear(in_features=896, out_features=896, bias=True)
+          )
+          (drop_path): DropPath()
+          (norm2): LayerNorm((896,), eps=1e-06, elementwise_affine=True, bias=True)
+          (mlp): MLP(
+            (layers): ModuleList(
+              (0): Linear(in_features=896, out_features=3584, bias=True)
+              (1): Linear(in_features=3584, out_features=896, bias=True)
+            )
+            (act): GELU(approximate='none')
+          )
+          (proj): Linear(in_features=448, out_features=896, bias=True)
+        )
+        (22-23): 2 x MultiScaleBlock(
+          (norm1): LayerNorm((896,), eps=1e-06, elementwise_affine=True, bias=True)
+          (attn): MultiScaleAttention(
+            (qkv): Linear(in_features=896, out_features=2688, bias=True)
+            (proj): Linear(in_features=896, out_features=896, bias=True)
+          )
+          (drop_path): DropPath()
+          (norm2): LayerNorm((896,), eps=1e-06, elementwise_affine=True, bias=True)
+          (mlp): MLP(
+            (layers): ModuleList(
+              (0): Linear(in_features=896, out_features=3584, bias=True)
+              (1): Linear(in_features=3584, out_features=896, bias=True)
+            )
+            (act): GELU(approximate='none')
+          )
+        )
+      )
+    )
+    (neck): FpnNeck(
+      (position_encoding): PositionEmbeddingSine()
+      (convs): ModuleList(
+        (0): Sequential(
+          (conv): Conv2d(896, 256, kernel_size=(1, 1), stride=(1, 1))
+        )
+        (1): Sequential(
+          (conv): Conv2d(448, 256, kernel_size=(1, 1), stride=(1, 1))
+        )
+        (2): Sequential(
+          (conv): Conv2d(224, 256, kernel_size=(1, 1), stride=(1, 1))
+        )
+        (3): Sequential(
+          (conv): Conv2d(112, 256, kernel_size=(1, 1), stride=(1, 1))
+        )
+      )
+    )
+  )
+  (mask_downsample): Conv2d(1, 1, kernel_size=(4, 4), stride=(4, 4))
+  (memory_attention): MemoryAttention(
+    (layers): ModuleList(
+      (0-3): 4 x MemoryAttentionLayer(
+        (self_attn): RoPEAttention(
+          (q_proj): Linear(in_features=256, out_features=256, bias=True)
+          (k_proj): Linear(in_features=256, out_features=256, bias=True)
+          (v_proj): Linear(in_features=256, out_features=256, bias=True)
+          (out_proj): Linear(in_features=256, out_features=256, bias=True)
+        )
+        (cross_attn_image): RoPEAttention(
+          (q_proj): Linear(in_features=256, out_features=256, bias=True)
+          (k_proj): Linear(in_features=64, out_features=256, bias=True)
+          (v_proj): Linear(in_features=64, out_features=256, bias=True)
+          (out_proj): Linear(in_features=256, out_features=256, bias=True)
+        )
+        (linear1): Linear(in_features=256, out_features=2048, bias=True)
+        (dropout): Dropout(p=0.1, inplace=False)
+        (linear2): Linear(in_features=2048, out_features=256, bias=True)
+        (norm1): LayerNorm((256,), eps=1e-05, elementwise_affine=True, bias=True)
+        (norm2): LayerNorm((256,), eps=1e-05, elementwise_affine=True, bias=True)
+        (norm3): LayerNorm((256,), eps=1e-05, elementwise_affine=True, bias=True)
+        (dropout1): Dropout(p=0.1, inplace=False)
+        (dropout2): Dropout(p=0.1, inplace=False)
+        (dropout3): Dropout(p=0.1, inplace=False)
+      )
+    )
+    (norm): LayerNorm((256,), eps=1e-05, elementwise_affine=True, bias=True)
+  )
+  (memory_encoder): MemoryEncoder(
+    (mask_downsampler): MaskDownSampler(
+      (encoder): Sequential(
+        (0): Conv2d(1, 4, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
+        (1): LayerNorm2d()
+        (2): GELU(approximate='none')
+        (3): Conv2d(4, 16, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
+        (4): LayerNorm2d()
+        (5): GELU(approximate='none')
+        (6): Conv2d(16, 64, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
+        (7): LayerNorm2d()
+        (8): GELU(approximate='none')
+        (9): Conv2d(64, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
+        (10): LayerNorm2d()
+        (11): GELU(approximate='none')
+        (12): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
+      )
+    )
+    (pix_feat_proj): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
+    (fuser): Fuser(
+      (proj): Identity()
+      (layers): ModuleList(
+        (0-1): 2 x CXBlock(
+          (dwconv): Conv2d(256, 256, kernel_size=(7, 7), stride=(1, 1), padding=(3, 3), groups=256)
+          (norm): LayerNorm2d()
+          (pwconv1): Linear(in_features=256, out_features=1024, bias=True)
+          (act): GELU(approximate='none')
+          (pwconv2): Linear(in_features=1024, out_features=256, bias=True)
+          (drop_path): Identity()
+        )
+      )
+    )
+    (position_encoding): PositionEmbeddingSine()
+    (out_proj): Conv2d(256, 64, kernel_size=(1, 1), stride=(1, 1))
+  )
+  (sam_prompt_encoder): PromptEncoder(
+    (pe_layer): PositionEmbeddingRandom()
+    (point_embeddings): ModuleList(
+      (0-3): 4 x Embedding(1, 256)
+    )
+    (not_a_point_embed): Embedding(1, 256)
+    (mask_downscaling): Sequential(
+      (0): Conv2d(1, 4, kernel_size=(2, 2), stride=(2, 2))
+      (1): LayerNorm2d()
+      (2): GELU(approximate='none')
+      (3): Conv2d(4, 16, kernel_size=(2, 2), stride=(2, 2))
+      (4): LayerNorm2d()
+      (5): GELU(approximate='none')
+      (6): Conv2d(16, 256, kernel_size=(1, 1), stride=(1, 1))
+    )
+    (no_mask_embed): Embedding(1, 256)
+  )
+  (sam_mask_decoder): MaskDecoder(
+    (transformer): TwoWayTransformer(
+      (layers): ModuleList(
+        (0-1): 2 x TwoWayAttentionBlock(
+          (self_attn): Attention(
+            (q_proj): Linear(in_features=256, out_features=256, bias=True)
+            (k_proj): Linear(in_features=256, out_features=256, bias=True)
+            (v_proj): Linear(in_features=256, out_features=256, bias=True)
+            (out_proj): Linear(in_features=256, out_features=256, bias=True)
+          )
+          (norm1): LayerNorm((256,), eps=1e-05, elementwise_affine=True, bias=True)
+          (cross_attn_token_to_image): Attention(
+            (q_proj): Linear(in_features=256, out_features=128, bias=True)
+            (k_proj): Linear(in_features=256, out_features=128, bias=True)
+            (v_proj): Linear(in_features=256, out_features=128, bias=True)
+            (out_proj): Linear(in_features=128, out_features=256, bias=True)
+          )
+          (norm2): LayerNorm((256,), eps=1e-05, elementwise_affine=True, bias=True)
+          (mlp): MLP(
+            (layers): ModuleList(
+              (0): Linear(in_features=256, out_features=2048, bias=True)
+              (1): Linear(in_features=2048, out_features=256, bias=True)
+            )
+            (act): ReLU()
+          )
+          (norm3): LayerNorm((256,), eps=1e-05, elementwise_affine=True, bias=True)
+          (norm4): LayerNorm((256,), eps=1e-05, elementwise_affine=True, bias=True)
+          (cross_attn_image_to_token): Attention(
+            (q_proj): Linear(in_features=256, out_features=128, bias=True)
+            (k_proj): Linear(in_features=256, out_features=128, bias=True)
+            (v_proj): Linear(in_features=256, out_features=128, bias=True)
+            (out_proj): Linear(in_features=128, out_features=256, bias=True)
+          )
+        )
+      )
+      (final_attn_token_to_image): Attention(
+        (q_proj): Linear(in_features=256, out_features=128, bias=True)
+        (k_proj): Linear(in_features=256, out_features=128, bias=True)
+        (v_proj): Linear(in_features=256, out_features=128, bias=True)
+        (out_proj): Linear(in_features=128, out_features=256, bias=True)
+      )
+      (norm_final_attn): LayerNorm((256,), eps=1e-05, elementwise_affine=True, bias=True)
+    )
+    (iou_token): Embedding(1, 256)
+    (mask_tokens): Embedding(4, 256)
+    (obj_score_token): Embedding(1, 256)
+    (output_upscaling): Sequential(
+      (0): ConvTranspose2d(256, 64, kernel_size=(2, 2), stride=(2, 2))
+      (1): LayerNorm2d()
+      (2): GELU(approximate='none')
+      (3): ConvTranspose2d(64, 32, kernel_size=(2, 2), stride=(2, 2))
+      (4): GELU(approximate='none')
+    )
+    (conv_s0): Conv2d(256, 32, kernel_size=(1, 1), stride=(1, 1))
+    (conv_s1): Conv2d(256, 64, kernel_size=(1, 1), stride=(1, 1))
+    (output_hypernetworks_mlps): ModuleList(
+      (0-3): 4 x MLP(
+        (layers): ModuleList(
+          (0-1): 2 x Linear(in_features=256, out_features=256, bias=True)
+          (2): Linear(in_features=256, out_features=32, bias=True)
+        )
+        (act): ReLU()
+      )
+    )
+    (iou_prediction_head): MLP(
+      (layers): ModuleList(
+        (0-1): 2 x Linear(in_features=256, out_features=256, bias=True)
+        (2): Linear(in_features=256, out_features=4, bias=True)
+      )
+      (act): ReLU()
+    )
+    (pred_obj_score_head): MLP(
+      (layers): ModuleList(
+        (0-1): 2 x Linear(in_features=256, out_features=256, bias=True)
+        (2): Linear(in_features=256, out_features=1, bias=True)
+      )
+      (act): ReLU()
+    )
+  )
+  (obj_ptr_proj): MLP(
+    (layers): ModuleList(
+      (0-2): 3 x Linear(in_features=256, out_features=256, bias=True)
+    )
+    (act): ReLU()
+  )
+  (obj_ptr_tpos_proj): Linear(in_features=256, out_features=64, bias=True)
+)
+INFO 2026-09-28 22:43:03,792 trainer.py:1062: 	Total parameters 80.9 M
+INFO 2026-09-28 22:43:03,792 trainer.py:1063: 	Trainable parameters 11.7 M
+INFO 2026-09-28 22:43:03,792 trainer.py:1066: 	Non-Trainable parameters 69.1 M
+INFO 2026-09-28 22:43:03,792 trainer.py:1069: ====================
+INFO 2026-09-28 22:43:03,795 trainer.py:1023: Finished setting up components: Model, loss, optim, meters etc.
+INFO 2026-09-28 22:43:03,795 trainer.py: 314: Moving components to device cuda:0 and local rank 0.
+INFO 2026-09-28 22:43:03,922 trainer.py: 320: Done moving components to device cuda:0 and local rank 0.
+INFO 2026-09-28 22:43:03,936 optimizer.py: 248: Matches for param_name [image_encoder.*]: {'image_encoder.trunk.blocks.12.mlp.layers.1.weight', 'image_encoder.trunk.patch_embed.proj.bias', 'image_encoder.trunk.blocks.11.mlp.layers.1.bias', 'image_encoder.neck.convs.1.conv.weight', 'image_encoder.trunk.blocks.21.attn.qkv.weight', 'image_encoder.trunk.blocks.22.attn.qkv.weight', 'image_encoder.trunk.blocks.16.mlp.layers.1.weight', 'image_encoder.trunk.blocks.17.norm2.bias', 'image_encoder.trunk.blocks.2.proj.bias', 'image_encoder.trunk.blocks.8.norm1.weight', 'image_encoder.trunk.blocks.15.attn.proj.weight', 'image_encoder.trunk.blocks.14.mlp.layers.0.bias', 'image_encoder.trunk.blocks.22.norm2.bias', 'image_encoder.trunk.blocks.16.attn.qkv.bias', 'image_encoder.trunk.blocks.18.attn.qkv.weight', 'image_encoder.trunk.blocks.14.attn.proj.bias', 'image_encoder.trunk.blocks.0.norm1.weight', 'image_encoder.trunk.blocks.1.attn.qkv.weight', 'image_encoder.trunk.blocks.6.mlp.layers.0.bias', 'image_encoder.trunk.blocks.19.norm1.weight', 'image_encoder.trunk.blocks.4.attn.qkv.bias', 'image_encoder.trunk.blocks.11.norm1.bias', 'image_encoder.trunk.blocks.14.norm2.bias', 'image_encoder.trunk.blocks.12.norm2.weight', 'image_encoder.trunk.blocks.10.mlp.layers.0.weight', 'image_encoder.trunk.blocks.9.attn.qkv.weight', 'image_encoder.trunk.blocks.6.norm2.weight', 'image_encoder.trunk.blocks.16.mlp.layers.0.bias', 'image_encoder.trunk.pos_embed_window', 'image_encoder.trunk.blocks.19.mlp.layers.0.bias', 'image_encoder.trunk.blocks.16.norm2.weight', 'image_encoder.trunk.blocks.22.mlp.layers.1.weight', 'image_encoder.trunk.blocks.3.norm2.weight', 'image_encoder.trunk.blocks.3.attn.qkv.bias', 'image_encoder.neck.convs.0.conv.bias', 'image_encoder.trunk.blocks.10.attn.qkv.bias', 'image_encoder.trunk.blocks.0.attn.proj.bias', 'image_encoder.trunk.blocks.14.attn.qkv.weight', 'image_encoder.trunk.blocks.15.mlp.layers.1.bias', 'image_encoder.trunk.blocks.19.norm1.bias', 'image_encoder.trunk.blocks.19.mlp.layers.1.weight', 'image_encoder.trunk.blocks.20.mlp.layers.1.weight', 'image_encoder.trunk.blocks.0.attn.proj.weight', 'image_encoder.trunk.blocks.16.norm1.bias', 'image_encoder.trunk.blocks.22.mlp.layers.1.bias', 'image_encoder.trunk.blocks.19.mlp.layers.0.weight', 'image_encoder.trunk.blocks.11.mlp.layers.0.weight', 'image_encoder.trunk.blocks.17.mlp.layers.0.bias', 'image_encoder.trunk.blocks.22.mlp.layers.0.weight', 'image_encoder.neck.convs.3.conv.bias', 'image_encoder.trunk.blocks.11.attn.proj.weight', 'image_encoder.trunk.blocks.7.attn.proj.bias', 'image_encoder.trunk.blocks.0.norm1.bias', 'image_encoder.trunk.blocks.21.mlp.layers.1.weight', 'image_encoder.trunk.blocks.9.mlp.layers.0.weight', 'image_encoder.trunk.blocks.14.mlp.layers.1.weight', 'image_encoder.trunk.blocks.13.attn.proj.bias', 'image_encoder.trunk.blocks.5.norm2.weight', 'image_encoder.trunk.blocks.13.norm2.weight', 'image_encoder.trunk.blocks.2.norm1.bias', 'image_encoder.trunk.blocks.8.mlp.layers.1.weight', 'image_encoder.trunk.blocks.5.attn.qkv.bias', 'image_encoder.trunk.blocks.4.attn.proj.bias', 'image_encoder.trunk.blocks.4.mlp.layers.0.bias', 'image_encoder.trunk.blocks.23.attn.qkv.weight', 'image_encoder.trunk.blocks.7.attn.qkv.bias', 'image_encoder.trunk.blocks.14.attn.proj.weight', 'image_encoder.trunk.blocks.6.attn.proj.bias', 'image_encoder.trunk.blocks.20.norm1.weight', 'image_encoder.trunk.blocks.5.attn.proj.weight', 'image_encoder.trunk.blocks.15.norm2.weight', 'image_encoder.trunk.blocks.11.attn.proj.bias', 'image_encoder.trunk.blocks.9.attn.proj.bias', 'image_encoder.trunk.blocks.12.attn.proj.bias', 'image_encoder.trunk.blocks.17.norm1.weight', 'image_encoder.trunk.blocks.1.attn.proj.bias', 'image_encoder.trunk.blocks.21.mlp.layers.0.bias', 'image_encoder.trunk.blocks.13.mlp.layers.0.bias', 'image_encoder.trunk.blocks.0.mlp.layers.1.bias', 'image_encoder.trunk.blocks.0.attn.qkv.bias', 'image_encoder.trunk.blocks.22.mlp.layers.0.bias', 'image_encoder.trunk.blocks.1.mlp.layers.0.weight', 'image_encoder.neck.convs.3.conv.weight', 'image_encoder.trunk.blocks.4.norm1.weight', 'image_encoder.trunk.blocks.0.mlp.layers.0.weight', 'image_encoder.trunk.blocks.6.attn.qkv.weight', 'image_encoder.trunk.blocks.11.attn.qkv.bias', 'image_encoder.trunk.blocks.18.norm1.weight', 'image_encoder.trunk.blocks.23.mlp.layers.1.weight', 'image_encoder.trunk.blocks.22.norm2.weight', 'image_encoder.trunk.blocks.19.norm2.weight', 'image_encoder.trunk.blocks.18.mlp.layers.0.bias', 'image_encoder.trunk.blocks.10.norm1.weight', 'image_encoder.trunk.blocks.6.attn.proj.weight', 'image_encoder.trunk.blocks.22.attn.proj.weight', 'image_encoder.trunk.blocks.23.attn.proj.weight', 'image_encoder.trunk.blocks.17.norm1.bias', 'image_encoder.trunk.blocks.12.norm1.weight', 'image_encoder.trunk.blocks.11.norm2.bias', 'image_encoder.trunk.blocks.15.mlp.layers.1.weight', 'image_encoder.trunk.blocks.11.norm2.weight', 'image_encoder.trunk.blocks.7.mlp.layers.1.weight', 'image_encoder.neck.convs.0.conv.weight', 'image_encoder.trunk.blocks.21.norm2.weight', 'image_encoder.trunk.blocks.11.mlp.layers.1.weight', 'image_encoder.trunk.blocks.23.norm2.bias', 'image_encoder.trunk.blocks.16.norm1.weight', 'image_encoder.trunk.blocks.9.norm2.weight', 'image_encoder.trunk.blocks.3.mlp.layers.1.weight', 'image_encoder.trunk.blocks.1.norm1.weight', 'image_encoder.trunk.blocks.15.mlp.layers.0.weight', 'image_encoder.trunk.blocks.21.mlp.layers.1.bias', 'image_encoder.trunk.blocks.16.attn.proj.weight', 'image_encoder.trunk.blocks.1.mlp.layers.1.weight', 'image_encoder.trunk.blocks.17.mlp.layers.1.weight', 'image_encoder.trunk.blocks.12.attn.qkv.bias', 'image_encoder.trunk.blocks.13.attn.qkv.weight', 'image_encoder.trunk.blocks.21.norm2.bias', 'image_encoder.trunk.blocks.10.attn.proj.weight', 'image_encoder.trunk.blocks.7.norm2.bias', 'image_encoder.trunk.blocks.8.norm1.bias', 'image_encoder.trunk.blocks.22.norm1.weight', 'image_encoder.trunk.blocks.5.proj.bias', 'image_encoder.trunk.blocks.15.norm1.weight', 'image_encoder.trunk.blocks.16.mlp.layers.0.weight', 'image_encoder.trunk.blocks.4.norm1.bias', 'image_encoder.trunk.blocks.2.norm2.bias', 'image_encoder.trunk.blocks.21.mlp.layers.0.weight', 'image_encoder.trunk.blocks.12.norm2.bias', 'image_encoder.trunk.blocks.13.mlp.layers.0.weight', 'image_encoder.trunk.blocks.23.mlp.layers.0.weight', 'image_encoder.trunk.blocks.1.norm2.weight', 'image_encoder.trunk.patch_embed.proj.weight', 'image_encoder.trunk.blocks.3.mlp.layers.1.bias', 'image_encoder.trunk.blocks.2.proj.weight', 'image_encoder.trunk.blocks.20.norm2.bias', 'image_encoder.trunk.blocks.11.mlp.layers.0.bias', 'image_encoder.trunk.blocks.3.mlp.layers.0.bias', 'image_encoder.trunk.blocks.15.attn.qkv.bias', 'image_encoder.trunk.blocks.10.mlp.layers.0.bias', 'image_encoder.trunk.blocks.9.mlp.layers.0.bias', 'image_encoder.trunk.blocks.21.proj.weight', 'image_encoder.neck.convs.2.conv.bias', 'image_encoder.trunk.blocks.20.attn.qkv.bias', 'image_encoder.trunk.blocks.14.attn.qkv.bias', 'image_encoder.trunk.blocks.7.norm2.weight', 'image_encoder.trunk.blocks.18.norm2.weight', 'image_encoder.trunk.blocks.22.attn.proj.bias', 'image_encoder.trunk.blocks.4.mlp.layers.1.weight', 'image_encoder.trunk.blocks.18.attn.proj.weight', 'image_encoder.trunk.blocks.9.norm1.bias', 'image_encoder.trunk.blocks.23.norm2.weight', 'image_encoder.trunk.blocks.14.norm2.weight', 'image_encoder.trunk.blocks.4.attn.proj.weight', 'image_encoder.trunk.blocks.7.mlp.layers.0.bias', 'image_encoder.trunk.blocks.8.attn.qkv.weight', 'image_encoder.neck.convs.2.conv.weight', 'image_encoder.trunk.blocks.1.mlp.layers.0.bias', 'image_encoder.trunk.blocks.5.mlp.layers.1.weight', 'image_encoder.trunk.blocks.8.attn.qkv.bias', 'image_encoder.trunk.blocks.20.attn.qkv.weight', 'image_encoder.trunk.blocks.20.mlp.layers.1.bias', 'image_encoder.trunk.blocks.8.mlp.layers.1.bias', 'image_encoder.trunk.blocks.1.mlp.layers.1.bias', 'image_encoder.trunk.blocks.23.mlp.layers.0.bias', 'image_encoder.trunk.blocks.4.attn.qkv.weight', 'image_encoder.trunk.blocks.17.attn.proj.bias', 'image_encoder.trunk.blocks.0.norm2.weight', 'image_encoder.trunk.blocks.19.attn.qkv.bias', 'image_encoder.trunk.blocks.19.attn.proj.bias', 'image_encoder.trunk.blocks.2.mlp.layers.0.weight', 'image_encoder.trunk.blocks.13.mlp.layers.1.bias', 'image_encoder.trunk.blocks.16.norm2.bias', 'image_encoder.trunk.blocks.2.mlp.layers.0.bias', 'image_encoder.trunk.blocks.18.mlp.layers.0.weight', 'image_encoder.trunk.blocks.6.norm1.weight', 'image_encoder.trunk.blocks.19.mlp.layers.1.bias', 'image_encoder.trunk.blocks.3.norm1.weight', 'image_encoder.trunk.blocks.14.norm1.bias', 'image_encoder.trunk.blocks.3.mlp.layers.0.weight', 'image_encoder.trunk.blocks.22.attn.qkv.bias', 'image_encoder.trunk.blocks.0.attn.qkv.weight', 'image_encoder.trunk.blocks.14.mlp.layers.1.bias', 'image_encoder.trunk.blocks.8.mlp.layers.0.bias', 'image_encoder.trunk.blocks.5.attn.qkv.weight', 'image_encoder.trunk.blocks.16.mlp.layers.1.bias', 'image_encoder.trunk.blocks.0.mlp.layers.1.weight', 'image_encoder.trunk.blocks.21.attn.proj.weight', 'image_encoder.trunk.blocks.17.mlp.layers.0.weight', 'image_encoder.trunk.blocks.7.norm1.bias', 'image_encoder.trunk.blocks.7.mlp.layers.0.weight', 'image_encoder.trunk.blocks.15.norm1.bias', 'image_encoder.trunk.blocks.4.norm2.weight', 'image_encoder.trunk.blocks.2.attn.qkv.weight', 'image_encoder.trunk.blocks.2.mlp.layers.1.weight', 'image_encoder.trunk.blocks.11.norm1.weight', 'image_encoder.trunk.blocks.17.norm2.weight', 'image_encoder.trunk.blocks.12.mlp.layers.0.weight', 'image_encoder.trunk.blocks.9.norm1.weight', 'image_encoder.trunk.blocks.7.norm1.weight', 'image_encoder.trunk.blocks.8.attn.proj.bias', 'image_encoder.trunk.blocks.2.norm2.weight', 'image_encoder.trunk.blocks.13.norm1.weight', 'image_encoder.trunk.blocks.8.norm2.bias', 'image_encoder.trunk.pos_embed', 'image_encoder.trunk.blocks.15.norm2.bias', 'image_encoder.trunk.blocks.5.mlp.layers.0.bias', 'image_encoder.trunk.blocks.23.norm1.weight', 'image_encoder.trunk.blocks.20.norm2.weight', 'image_encoder.trunk.blocks.8.norm2.weight', 'image_encoder.neck.convs.1.conv.bias', 'image_encoder.trunk.blocks.19.attn.qkv.weight', 'image_encoder.trunk.blocks.2.norm1.weight', 'image_encoder.trunk.blocks.5.mlp.layers.0.weight', 'image_encoder.trunk.blocks.6.mlp.layers.1.bias', 'image_encoder.trunk.blocks.12.norm1.bias', 'image_encoder.trunk.blocks.12.attn.qkv.weight', 'image_encoder.trunk.blocks.8.mlp.layers.0.weight', 'image_encoder.trunk.blocks.5.norm2.bias', 'image_encoder.trunk.blocks.14.mlp.layers.0.weight', 'image_encoder.trunk.blocks.20.norm1.bias', 'image_encoder.trunk.blocks.22.norm1.bias', 'image_encoder.trunk.blocks.4.mlp.layers.1.bias', 'image_encoder.trunk.blocks.12.mlp.layers.1.bias', 'image_encoder.trunk.blocks.5.mlp.layers.1.bias', 'image_encoder.trunk.blocks.18.attn.proj.bias', 'image_encoder.trunk.blocks.23.attn.qkv.bias', 'image_encoder.trunk.blocks.19.norm2.bias', 'image_encoder.trunk.blocks.6.norm1.bias', 'image_encoder.trunk.blocks.20.mlp.layers.0.bias', 'image_encoder.trunk.blocks.18.norm1.bias', 'image_encoder.trunk.blocks.6.mlp.layers.0.weight', 'image_encoder.trunk.blocks.1.attn.proj.weight', 'image_encoder.trunk.blocks.15.attn.proj.bias', 'image_encoder.trunk.blocks.13.mlp.layers.1.weight', 'image_encoder.trunk.blocks.12.attn.proj.weight', 'image_encoder.trunk.blocks.21.attn.proj.bias', 'image_encoder.trunk.blocks.2.attn.proj.weight', 'image_encoder.trunk.blocks.23.norm1.bias', 'image_encoder.trunk.blocks.1.norm1.bias', 'image_encoder.trunk.blocks.14.norm1.weight', 'image_encoder.trunk.blocks.1.attn.qkv.bias', 'image_encoder.trunk.blocks.18.norm2.bias', 'image_encoder.trunk.blocks.2.attn.proj.bias', 'image_encoder.trunk.blocks.16.attn.proj.bias', 'image_encoder.trunk.blocks.6.attn.qkv.bias', 'image_encoder.trunk.blocks.20.attn.proj.weight', 'image_encoder.trunk.blocks.21.attn.qkv.bias', 'image_encoder.trunk.blocks.19.attn.proj.weight', 'image_encoder.trunk.blocks.21.norm1.bias', 'image_encoder.trunk.blocks.21.norm1.weight', 'image_encoder.trunk.blocks.9.mlp.layers.1.weight', 'image_encoder.trunk.blocks.3.attn.qkv.weight', 'image_encoder.trunk.blocks.3.norm1.bias', 'image_encoder.trunk.blocks.7.attn.proj.weight', 'image_encoder.trunk.blocks.10.attn.proj.bias', 'image_encoder.trunk.blocks.10.norm2.bias', 'image_encoder.trunk.blocks.21.proj.bias', 'image_encoder.trunk.blocks.11.attn.qkv.weight', 'image_encoder.trunk.blocks.10.norm2.weight', 'image_encoder.trunk.blocks.5.proj.weight', 'image_encoder.trunk.blocks.20.attn.proj.bias', 'image_encoder.trunk.blocks.6.norm2.bias', 'image_encoder.trunk.blocks.13.attn.qkv.bias', 'image_encoder.trunk.blocks.23.mlp.layers.1.bias', 'image_encoder.trunk.blocks.3.attn.proj.weight', 'image_encoder.trunk.blocks.15.mlp.layers.0.bias', 'image_encoder.trunk.blocks.6.mlp.layers.1.weight', 'image_encoder.trunk.blocks.13.attn.proj.weight', 'image_encoder.trunk.blocks.3.attn.proj.bias', 'image_encoder.trunk.blocks.13.norm2.bias', 'image_encoder.trunk.blocks.2.mlp.layers.1.bias', 'image_encoder.trunk.blocks.0.mlp.layers.0.bias', 'image_encoder.trunk.blocks.4.norm2.bias', 'image_encoder.trunk.blocks.7.attn.qkv.weight', 'image_encoder.trunk.blocks.16.attn.qkv.weight', 'image_encoder.trunk.blocks.5.attn.proj.bias', 'image_encoder.trunk.blocks.4.mlp.layers.0.weight', 'image_encoder.trunk.blocks.17.attn.proj.weight', 'image_encoder.trunk.blocks.18.mlp.layers.1.weight', 'image_encoder.trunk.blocks.8.attn.proj.weight', 'image_encoder.trunk.blocks.7.mlp.layers.1.bias', 'image_encoder.trunk.blocks.23.attn.proj.bias', 'image_encoder.trunk.blocks.5.norm1.bias', 'image_encoder.trunk.blocks.3.norm2.bias', 'image_encoder.trunk.blocks.10.norm1.bias', 'image_encoder.trunk.blocks.17.mlp.layers.1.bias', 'image_encoder.trunk.blocks.17.attn.qkv.weight', 'image_encoder.trunk.blocks.17.attn.qkv.bias', 'image_encoder.trunk.blocks.12.mlp.layers.0.bias', 'image_encoder.trunk.blocks.2.attn.qkv.bias', 'image_encoder.trunk.blocks.9.attn.qkv.bias', 'image_encoder.trunk.blocks.0.norm2.bias', 'image_encoder.trunk.blocks.13.norm1.bias', 'image_encoder.trunk.blocks.5.norm1.weight', 'image_encoder.trunk.blocks.18.mlp.layers.1.bias', 'image_encoder.trunk.blocks.10.mlp.layers.1.bias', 'image_encoder.trunk.blocks.20.mlp.layers.0.weight', 'image_encoder.trunk.blocks.10.mlp.layers.1.weight', 'image_encoder.trunk.blocks.9.mlp.layers.1.bias', 'image_encoder.trunk.blocks.1.norm2.bias', 'image_encoder.trunk.blocks.9.norm2.bias', 'image_encoder.trunk.blocks.18.attn.qkv.bias', 'image_encoder.trunk.blocks.15.attn.qkv.weight', 'image_encoder.trunk.blocks.9.attn.proj.weight', 'image_encoder.trunk.blocks.10.attn.qkv.weight'}
+INFO 2026-09-28 22:43:03,938 optimizer.py: 248: Matches for param_name [*bias*]: {'sam_mask_decoder.transformer.norm_final_attn.bias', 'image_encoder.trunk.patch_embed.proj.bias', 'image_encoder.trunk.blocks.11.mlp.layers.1.bias', 'sam_mask_decoder.transformer.final_attn_token_to_image.v_proj.bias', 'memory_attention.layers.2.cross_attn_image.k_proj.bias', 'sam_mask_decoder.transformer.layers.0.cross_attn_image_to_token.k_proj.bias', 'memory_attention.layers.2.self_attn.v_proj.bias', 'memory_encoder.pix_feat_proj.bias', 'sam_mask_decoder.transformer.layers.0.mlp.layers.1.bias', 'image_encoder.trunk.blocks.17.norm2.bias', 'image_encoder.trunk.blocks.2.proj.bias', 'image_encoder.trunk.blocks.14.mlp.layers.0.bias', 'sam_mask_decoder.transformer.layers.0.cross_attn_image_to_token.out_proj.bias', 'image_encoder.trunk.blocks.22.norm2.bias', 'image_encoder.trunk.blocks.16.attn.qkv.bias', 'image_encoder.trunk.blocks.14.attn.proj.bias', 'memory_attention.layers.0.cross_attn_image.v_proj.bias', 'image_encoder.trunk.blocks.6.mlp.layers.0.bias', 'image_encoder.trunk.blocks.4.attn.qkv.bias', 'image_encoder.trunk.blocks.11.norm1.bias', 'image_encoder.trunk.blocks.14.norm2.bias', 'sam_mask_decoder.output_upscaling.3.bias', 'memory_attention.layers.2.self_attn.out_proj.bias', 'image_encoder.trunk.blocks.16.mlp.layers.0.bias', 'sam_mask_decoder.iou_prediction_head.layers.1.bias', 'image_encoder.trunk.blocks.19.mlp.layers.0.bias', 'memory_encoder.fuser.layers.0.dwconv.bias', 'memory_attention.layers.1.cross_attn_image.out_proj.bias', 'image_encoder.trunk.blocks.3.attn.qkv.bias', 'image_encoder.neck.convs.0.conv.bias', 'sam_mask_decoder.transformer.layers.1.norm1.bias', 'image_encoder.trunk.blocks.10.attn.qkv.bias', 'image_encoder.trunk.blocks.0.attn.proj.bias', 'memory_attention.layers.3.linear2.bias', 'image_encoder.trunk.blocks.15.mlp.layers.1.bias', 'image_encoder.trunk.blocks.19.norm1.bias', 'memory_attention.layers.0.self_attn.out_proj.bias', 'sam_prompt_encoder.mask_downscaling.4.bias', 'image_encoder.trunk.blocks.20.attn.qkv.bias', 'image_encoder.trunk.blocks.16.norm1.bias', 'sam_prompt_encoder.mask_downscaling.3.bias', 'image_encoder.trunk.blocks.22.mlp.layers.1.bias', 'memory_attention.layers.0.cross_attn_image.out_proj.bias', 'memory_attention.layers.2.self_attn.q_proj.bias', 'sam_mask_decoder.transformer.layers.0.cross_attn_token_to_image.v_proj.bias', 'image_encoder.trunk.blocks.17.mlp.layers.0.bias', 'image_encoder.neck.convs.3.conv.bias', 'memory_encoder.mask_downsampler.encoder.1.bias', 'obj_ptr_proj.layers.0.bias', 'image_encoder.trunk.blocks.7.attn.proj.bias', 'memory_attention.layers.1.cross_attn_image.v_proj.bias', 'image_encoder.trunk.blocks.0.norm1.bias', 'obj_ptr_proj.layers.1.bias', 'memory_encoder.fuser.layers.1.pwconv1.bias', 'sam_mask_decoder.iou_prediction_head.layers.2.bias', 'image_encoder.trunk.blocks.13.attn.proj.bias', 'memory_attention.layers.1.cross_attn_image.q_proj.bias', 'memory_attention.layers.3.self_attn.v_proj.bias', 'image_encoder.trunk.blocks.2.norm1.bias', 'image_encoder.trunk.blocks.5.attn.qkv.bias', 'image_encoder.trunk.blocks.4.attn.proj.bias', 'image_encoder.trunk.blocks.4.mlp.layers.0.bias', 'image_encoder.trunk.blocks.7.attn.qkv.bias', 'sam_mask_decoder.transformer.layers.1.cross_attn_token_to_image.out_proj.bias', 'sam_mask_decoder.transformer.layers.0.self_attn.out_proj.bias', 'memory_attention.layers.1.self_attn.k_proj.bias', 'sam_mask_decoder.transformer.layers.0.norm4.bias', 'sam_mask_decoder.transformer.layers.0.cross_attn_token_to_image.k_proj.bias', 'memory_attention.layers.1.self_attn.q_proj.bias', 'sam_mask_decoder.transformer.layers.0.self_attn.k_proj.bias', 'image_encoder.trunk.blocks.6.attn.proj.bias', 'memory_attention.layers.0.cross_attn_image.k_proj.bias', 'image_encoder.trunk.blocks.11.attn.proj.bias', 'image_encoder.trunk.blocks.9.attn.proj.bias', 'image_encoder.trunk.blocks.12.attn.proj.bias', 'memory_attention.layers.3.norm2.bias', 'image_encoder.trunk.blocks.1.attn.proj.bias', 'memory_encoder.mask_downsampler.encoder.6.bias', 'image_encoder.trunk.blocks.13.mlp.layers.0.bias', 'image_encoder.trunk.blocks.21.mlp.layers.0.bias', 'memory_attention.layers.0.linear1.bias', 'image_encoder.trunk.blocks.0.mlp.layers.1.bias', 'image_encoder.trunk.blocks.22.mlp.layers.0.bias', 'image_encoder.trunk.blocks.0.attn.qkv.bias', 'image_encoder.trunk.blocks.11.attn.qkv.bias', 'memory_attention.layers.1.norm1.bias', 'memory_attention.layers.3.self_attn.out_proj.bias', 'image_encoder.trunk.blocks.18.mlp.layers.0.bias', 'memory_attention.layers.3.norm1.bias', 'image_encoder.trunk.blocks.17.norm1.bias', 'image_encoder.trunk.blocks.11.norm2.bias', 'memory_attention.layers.0.self_attn.v_proj.bias', 'memory_encoder.mask_downsampler.encoder.9.bias', 'sam_mask_decoder.output_hypernetworks_mlps.0.layers.2.bias', 'memory_attention.layers.3.self_attn.k_proj.bias', 'sam_mask_decoder.transformer.layers.1.norm2.bias', 'image_encoder.trunk.blocks.23.norm2.bias', 'image_encoder.trunk.blocks.21.mlp.layers.1.bias', 'memory_attention.layers.0.norm1.bias', 'memory_attention.layers.1.linear2.bias', 'sam_mask_decoder.transformer.layers.1.mlp.layers.0.bias', 'memory_attention.layers.3.norm3.bias', 'image_encoder.trunk.blocks.12.attn.qkv.bias', 'image_encoder.trunk.blocks.21.norm2.bias', 'memory_encoder.fuser.layers.1.pwconv2.bias', 'image_encoder.trunk.blocks.7.norm2.bias', 'image_encoder.trunk.blocks.8.norm1.bias', 'image_encoder.trunk.blocks.5.proj.bias', 'sam_mask_decoder.pred_obj_score_head.layers.2.bias', 'memory_attention.layers.0.self_attn.q_proj.bias', 'image_encoder.trunk.blocks.4.norm1.bias', 'memory_encoder.mask_downsampler.encoder.4.bias', 'image_encoder.trunk.blocks.2.norm2.bias', 'image_encoder.trunk.blocks.12.norm2.bias', 'memory_attention.layers.0.linear2.bias', 'memory_attention.layers.3.self_attn.q_proj.bias', 'sam_mask_decoder.pred_obj_score_head.layers.0.bias', 'memory_attention.norm.bias', 'sam_mask_decoder.transformer.layers.1.self_attn.k_proj.bias', 'image_encoder.trunk.blocks.3.mlp.layers.1.bias', 'obj_ptr_proj.layers.2.bias', 'image_encoder.trunk.blocks.20.norm2.bias', 'image_encoder.trunk.blocks.11.mlp.layers.0.bias', 'sam_mask_decoder.iou_prediction_head.layers.0.bias', 'image_encoder.trunk.blocks.3.mlp.layers.0.bias', 'image_encoder.trunk.blocks.15.attn.qkv.bias', 'sam_mask_decoder.output_hypernetworks_mlps.1.layers.1.bias', 'image_encoder.trunk.blocks.10.mlp.layers.0.bias', 'image_encoder.trunk.blocks.9.mlp.layers.0.bias', 'memory_attention.layers.1.self_attn.out_proj.bias', 'image_encoder.neck.convs.2.conv.bias', 'image_encoder.trunk.blocks.14.attn.qkv.bias', 'memory_attention.layers.3.cross_attn_image.out_proj.bias', 'memory_encoder.mask_downsampler.encoder.3.bias', 'sam_mask_decoder.transformer.layers.1.self_attn.v_proj.bias', 'sam_mask_decoder.output_hypernetworks_mlps.0.layers.0.bias', 'sam_mask_decoder.transformer.layers.1.cross_attn_image_to_token.v_proj.bias', 'sam_mask_decoder.transformer.layers.0.cross_attn_image_to_token.q_proj.bias', 'image_encoder.trunk.blocks.22.attn.proj.bias', 'memory_attention.layers.0.self_attn.k_proj.bias', 'image_encoder.trunk.blocks.9.norm1.bias', 'sam_mask_decoder.pred_obj_score_head.layers.1.bias', 'memory_encoder.mask_downsampler.encoder.0.bias', 'memory_encoder.fuser.layers.1.dwconv.bias', 'memory_attention.layers.2.norm3.bias', 'image_encoder.trunk.blocks.7.mlp.layers.0.bias', 'sam_mask_decoder.output_upscaling.1.bias', 'image_encoder.trunk.blocks.1.mlp.layers.0.bias', 'image_encoder.trunk.blocks.8.attn.qkv.bias', 'sam_mask_decoder.transformer.layers.0.self_attn.v_proj.bias', 'sam_mask_decoder.transformer.layers.0.cross_attn_token_to_image.q_proj.bias', 'image_encoder.trunk.blocks.20.mlp.layers.1.bias', 'image_encoder.trunk.blocks.8.mlp.layers.1.bias', 'sam_mask_decoder.transformer.layers.1.self_attn.q_proj.bias', 'image_encoder.trunk.blocks.23.mlp.layers.0.bias', 'sam_mask_decoder.transformer.layers.1.cross_attn_token_to_image.q_proj.bias', 'memory_attention.layers.1.linear1.bias', 'image_encoder.trunk.blocks.1.mlp.layers.1.bias', 'memory_attention.layers.2.norm2.bias', 'image_encoder.trunk.blocks.17.attn.proj.bias', 'sam_mask_decoder.conv_s1.bias', 'sam_mask_decoder.transformer.final_attn_token_to_image.out_proj.bias', 'image_encoder.trunk.blocks.19.attn.qkv.bias', 'sam_mask_decoder.output_hypernetworks_mlps.3.layers.0.bias', 'image_encoder.trunk.blocks.19.attn.proj.bias', 'memory_attention.layers.3.cross_attn_image.q_proj.bias', 'image_encoder.trunk.blocks.13.mlp.layers.1.bias', 'memory_attention.layers.3.linear1.bias', 'memory_encoder.out_proj.bias', 'memory_encoder.fuser.layers.0.pwconv1.bias', 'image_encoder.trunk.blocks.16.norm2.bias', 'image_encoder.trunk.blocks.2.mlp.layers.0.bias', 'sam_mask_decoder.transformer.layers.0.norm3.bias', 'memory_attention.layers.0.norm3.bias', 'image_encoder.trunk.blocks.19.mlp.layers.1.bias', 'sam_mask_decoder.transformer.layers.1.norm3.bias', 'image_encoder.trunk.blocks.14.norm1.bias', 'sam_mask_decoder.transformer.layers.1.cross_attn_token_to_image.v_proj.bias', 'memory_attention.layers.2.self_attn.k_proj.bias', 'image_encoder.trunk.blocks.14.mlp.layers.1.bias', 'image_encoder.trunk.blocks.22.attn.qkv.bias', 'sam_mask_decoder.transformer.layers.0.mlp.layers.0.bias', 'sam_prompt_encoder.mask_downscaling.0.bias', 'memory_attention.layers.2.norm1.bias', 'image_encoder.trunk.blocks.16.mlp.layers.1.bias', 'image_encoder.trunk.blocks.8.mlp.layers.0.bias', 'image_encoder.trunk.blocks.7.norm1.bias', 'memory_encoder.mask_downsampler.encoder.7.bias', 'memory_attention.layers.3.cross_attn_image.k_proj.bias', 'memory_attention.layers.0.norm2.bias', 'image_encoder.trunk.blocks.15.norm1.bias', 'sam_mask_decoder.transformer.final_attn_token_to_image.k_proj.bias', 'mask_downsample.bias', 'sam_mask_decoder.transformer.layers.0.norm1.bias', 'image_encoder.trunk.blocks.8.attn.proj.bias', 'memory_encoder.fuser.layers.0.norm.bias', 'sam_mask_decoder.output_hypernetworks_mlps.3.layers.2.bias', 'sam_mask_decoder.output_hypernetworks_mlps.2.layers.0.bias', 'memory_attention.layers.0.cross_attn_image.q_proj.bias', 'memory_attention.layers.1.norm3.bias', 'image_encoder.trunk.blocks.5.mlp.layers.0.bias', 'image_encoder.trunk.blocks.8.norm2.bias', 'sam_mask_decoder.transformer.layers.1.cross_attn_token_to_image.k_proj.bias', 'sam_mask_decoder.output_hypernetworks_mlps.2.layers.2.bias', 'image_encoder.trunk.blocks.15.norm2.bias', 'memory_attention.layers.2.cross_attn_image.v_proj.bias', 'sam_mask_decoder.transformer.layers.1.self_attn.out_proj.bias', 'image_encoder.neck.convs.1.conv.bias', 'image_encoder.trunk.blocks.6.mlp.layers.1.bias', 'image_encoder.trunk.blocks.12.norm1.bias', 'memory_attention.layers.2.linear1.bias', 'sam_mask_decoder.conv_s0.bias', 'image_encoder.trunk.blocks.5.norm2.bias', 'sam_mask_decoder.transformer.layers.0.cross_attn_token_to_image.out_proj.bias', 'memory_attention.layers.2.cross_attn_image.out_proj.bias', 'image_encoder.trunk.blocks.22.norm1.bias', 'image_encoder.trunk.blocks.4.mlp.layers.1.bias', 'image_encoder.trunk.blocks.20.norm1.bias', 'image_encoder.trunk.blocks.12.mlp.layers.1.bias', 'sam_mask_decoder.output_hypernetworks_mlps.3.layers.1.bias', 'image_encoder.trunk.blocks.5.mlp.layers.1.bias', 'image_encoder.trunk.blocks.18.attn.proj.bias', 'image_encoder.trunk.blocks.23.attn.qkv.bias', 'image_encoder.trunk.blocks.19.norm2.bias', 'image_encoder.trunk.blocks.6.norm1.bias', 'sam_mask_decoder.transformer.layers.1.cross_attn_image_to_token.k_proj.bias', 'memory_attention.layers.2.cross_attn_image.q_proj.bias', 'image_encoder.trunk.blocks.20.mlp.layers.0.bias', 'memory_attention.layers.2.linear2.bias', 'sam_mask_decoder.transformer.layers.1.cross_attn_image_to_token.q_proj.bias', 'image_encoder.trunk.blocks.18.norm1.bias', 'image_encoder.trunk.blocks.15.attn.proj.bias', 'memory_attention.layers.1.self_attn.v_proj.bias', 'image_encoder.trunk.blocks.1.norm1.bias', 'image_encoder.trunk.blocks.21.attn.proj.bias', 'image_encoder.trunk.blocks.23.norm1.bias', 'sam_prompt_encoder.mask_downscaling.1.bias', 'image_encoder.trunk.blocks.1.attn.qkv.bias', 'image_encoder.trunk.blocks.18.norm2.bias', 'sam_mask_decoder.transformer.layers.0.cross_attn_image_to_token.v_proj.bias', 'image_encoder.trunk.blocks.2.attn.proj.bias', 'image_encoder.trunk.blocks.16.attn.proj.bias', 'sam_mask_decoder.output_hypernetworks_mlps.2.layers.1.bias', 'image_encoder.trunk.blocks.6.attn.qkv.bias', 'image_encoder.trunk.blocks.21.attn.qkv.bias', 'image_encoder.trunk.blocks.21.norm1.bias', 'sam_prompt_encoder.mask_downscaling.6.bias', 'image_encoder.trunk.blocks.3.norm1.bias', 'memory_attention.layers.3.cross_attn_image.v_proj.bias', 'image_encoder.trunk.blocks.10.attn.proj.bias', 'image_encoder.trunk.blocks.10.norm2.bias', 'image_encoder.trunk.blocks.21.proj.bias', 'sam_mask_decoder.transformer.layers.1.mlp.layers.1.bias', 'image_encoder.trunk.blocks.20.attn.proj.bias', 'sam_mask_decoder.transformer.layers.0.norm2.bias', 'sam_mask_decoder.output_hypernetworks_mlps.1.layers.2.bias', 'memory_attention.layers.1.cross_attn_image.k_proj.bias', 'image_encoder.trunk.blocks.13.attn.qkv.bias', 'image_encoder.trunk.blocks.6.norm2.bias', 'image_encoder.trunk.blocks.23.mlp.layers.1.bias', 'image_encoder.trunk.blocks.15.mlp.layers.0.bias', 'memory_encoder.mask_downsampler.encoder.10.bias', 'image_encoder.trunk.blocks.13.norm2.bias', 'image_encoder.trunk.blocks.3.attn.proj.bias', 'image_encoder.trunk.blocks.4.norm2.bias', 'image_encoder.trunk.blocks.2.mlp.layers.1.bias', 'image_encoder.trunk.blocks.0.mlp.layers.0.bias', 'sam_mask_decoder.transformer.final_attn_token_to_image.q_proj.bias', 'image_encoder.trunk.blocks.5.attn.proj.bias', 'memory_attention.layers.1.norm2.bias', 'sam_mask_decoder.output_hypernetworks_mlps.1.layers.0.bias', 'image_encoder.trunk.blocks.7.mlp.layers.1.bias', 'image_encoder.trunk.blocks.23.attn.proj.bias', 'memory_encoder.fuser.layers.0.pwconv2.bias', 'image_encoder.trunk.blocks.5.norm1.bias', 'image_encoder.trunk.blocks.3.norm2.bias', 'image_encoder.trunk.blocks.10.norm1.bias', 'sam_mask_decoder.transformer.layers.1.cross_attn_image_to_token.out_proj.bias', 'image_encoder.trunk.blocks.17.mlp.layers.1.bias', 'sam_mask_decoder.transformer.layers.0.self_attn.q_proj.bias', 'memory_encoder.fuser.layers.1.norm.bias', 'image_encoder.trunk.blocks.17.attn.qkv.bias', 'image_encoder.trunk.blocks.12.mlp.layers.0.bias', 'sam_mask_decoder.output_hypernetworks_mlps.0.layers.1.bias', 'image_encoder.trunk.blocks.2.attn.qkv.bias', 'image_encoder.trunk.blocks.9.attn.qkv.bias', 'sam_mask_decoder.transformer.layers.1.norm4.bias', 'memory_encoder.mask_downsampler.encoder.12.bias', 'image_encoder.trunk.blocks.13.norm1.bias', 'image_encoder.trunk.blocks.0.norm2.bias', 'image_encoder.trunk.blocks.18.mlp.layers.1.bias', 'image_encoder.trunk.blocks.10.mlp.layers.1.bias', 'image_encoder.trunk.blocks.9.mlp.layers.1.bias', 'image_encoder.trunk.blocks.9.norm2.bias', 'image_encoder.trunk.blocks.1.norm2.bias', 'sam_mask_decoder.output_upscaling.0.bias', 'image_encoder.trunk.blocks.18.attn.qkv.bias', 'obj_ptr_tpos_proj.bias'}
+INFO 2026-09-28 22:43:03,939 optimizer.py: 220: Matches for module_cls_name [torch.nn.LayerNorm]: {'sam_mask_decoder.transformer.norm_final_attn.bias', 'sam_mask_decoder.transformer.layers.0.norm3.weight', 'image_encoder.trunk.blocks.17.norm2.bias', 'image_encoder.trunk.blocks.8.norm1.weight', 'image_encoder.trunk.blocks.22.norm2.bias', 'image_encoder.trunk.blocks.0.norm1.weight', 'image_encoder.trunk.blocks.19.norm1.weight', 'image_encoder.trunk.blocks.11.norm1.bias', 'image_encoder.trunk.blocks.14.norm2.bias', 'image_encoder.trunk.blocks.12.norm2.weight', 'image_encoder.trunk.blocks.6.norm2.weight', 'memory_attention.layers.1.norm2.weight', 'image_encoder.trunk.blocks.16.norm2.weight', 'image_encoder.trunk.blocks.3.norm2.weight', 'sam_mask_decoder.transformer.layers.1.norm1.bias', 'image_encoder.trunk.blocks.19.norm1.bias', 'image_encoder.trunk.blocks.16.norm1.bias', 'image_encoder.trunk.blocks.0.norm1.bias', 'image_encoder.trunk.blocks.5.norm2.weight', 'image_encoder.trunk.blocks.13.norm2.weight', 'image_encoder.trunk.blocks.2.norm1.bias', 'sam_mask_decoder.transformer.layers.0.norm4.bias', 'image_encoder.trunk.blocks.20.norm1.weight', 'image_encoder.trunk.blocks.15.norm2.weight', 'memory_attention.layers.3.norm2.bias', 'image_encoder.trunk.blocks.17.norm1.weight', 'image_encoder.trunk.blocks.4.norm1.weight', 'image_encoder.trunk.blocks.18.norm1.weight', 'memory_attention.layers.1.norm1.bias', 'image_encoder.trunk.blocks.22.norm2.weight', 'image_encoder.trunk.blocks.19.norm2.weight', 'memory_attention.layers.0.norm3.weight', 'image_encoder.trunk.blocks.10.norm1.weight', 'sam_mask_decoder.transformer.layers.1.norm3.weight', 'memory_attention.layers.3.norm1.bias', 'image_encoder.trunk.blocks.11.norm2.bias', 'image_encoder.trunk.blocks.12.norm1.weight', 'image_encoder.trunk.blocks.17.norm1.bias', 'memory_attention.layers.2.norm3.weight', 'sam_mask_decoder.transformer.layers.1.norm2.bias', 'image_encoder.trunk.blocks.11.norm2.weight', 'image_encoder.trunk.blocks.21.norm2.weight', 'sam_mask_decoder.transformer.norm_final_attn.weight', 'image_encoder.trunk.blocks.16.norm1.weight', 'image_encoder.trunk.blocks.9.norm2.weight', 'image_encoder.trunk.blocks.23.norm2.bias', 'image_encoder.trunk.blocks.1.norm1.weight', 'memory_attention.layers.0.norm1.bias', 'memory_attention.layers.3.norm3.bias', 'image_encoder.trunk.blocks.21.norm2.bias', 'image_encoder.trunk.blocks.7.norm2.bias', 'image_encoder.trunk.blocks.8.norm1.bias', 'image_encoder.trunk.blocks.22.norm1.weight', 'sam_mask_decoder.transformer.layers.1.norm2.weight', 'image_encoder.trunk.blocks.15.norm1.weight', 'sam_mask_decoder.transformer.layers.0.norm1.weight', 'memory_attention.layers.2.norm1.weight', 'image_encoder.trunk.blocks.4.norm1.bias', 'image_encoder.trunk.blocks.2.norm2.bias', 'image_encoder.trunk.blocks.12.norm2.bias', 'memory_attention.layers.0.norm2.weight', 'image_encoder.trunk.blocks.1.norm2.weight', 'memory_attention.norm.bias', 'memory_attention.norm.weight', 'image_encoder.trunk.blocks.20.norm2.bias', 'memory_attention.layers.1.norm1.weight', 'image_encoder.trunk.blocks.7.norm2.weight', 'image_encoder.trunk.blocks.18.norm2.weight', 'image_encoder.trunk.blocks.9.norm1.bias', 'image_encoder.trunk.blocks.14.norm2.weight', 'image_encoder.trunk.blocks.23.norm2.weight', 'memory_attention.layers.2.norm3.bias', 'memory_attention.layers.2.norm2.bias', 'image_encoder.trunk.blocks.0.norm2.weight', 'image_encoder.trunk.blocks.16.norm2.bias', 'memory_attention.layers.0.norm3.bias', 'sam_mask_decoder.transformer.layers.0.norm3.bias', 'image_encoder.trunk.blocks.6.norm1.weight', 'sam_mask_decoder.transformer.layers.1.norm3.bias', 'image_encoder.trunk.blocks.3.norm1.weight', 'image_encoder.trunk.blocks.14.norm1.bias', 'memory_attention.layers.2.norm1.bias', 'sam_mask_decoder.transformer.layers.0.norm4.weight', 'image_encoder.trunk.blocks.7.norm1.bias', 'memory_attention.layers.0.norm2.bias', 'image_encoder.trunk.blocks.4.norm2.weight', 'image_encoder.trunk.blocks.15.norm1.bias', 'image_encoder.trunk.blocks.11.norm1.weight', 'image_encoder.trunk.blocks.17.norm2.weight', 'image_encoder.trunk.blocks.9.norm1.weight', 'sam_mask_decoder.transformer.layers.0.norm1.bias', 'image_encoder.trunk.blocks.2.norm2.weight', 'image_encoder.trunk.blocks.7.norm1.weight', 'image_encoder.trunk.blocks.13.norm1.weight', 'image_encoder.trunk.blocks.8.norm2.bias', 'image_encoder.trunk.blocks.15.norm2.bias', 'memory_attention.layers.1.norm3.bias', 'image_encoder.trunk.blocks.23.norm1.weight', 'image_encoder.trunk.blocks.20.norm2.weight', 'image_encoder.trunk.blocks.8.norm2.weight', 'image_encoder.trunk.blocks.2.norm1.weight', 'image_encoder.trunk.blocks.12.norm1.bias', 'image_encoder.trunk.blocks.5.norm2.bias', 'image_encoder.trunk.blocks.20.norm1.bias', 'image_encoder.trunk.blocks.22.norm1.bias', 'sam_mask_decoder.transformer.layers.1.norm4.weight', 'image_encoder.trunk.blocks.19.norm2.bias', 'image_encoder.trunk.blocks.6.norm1.bias', 'memory_attention.layers.3.norm1.weight', 'image_encoder.trunk.blocks.18.norm1.bias', 'image_encoder.trunk.blocks.1.norm1.bias', 'image_encoder.trunk.blocks.14.norm1.weight', 'image_encoder.trunk.blocks.23.norm1.bias', 'memory_attention.layers.0.norm1.weight', 'image_encoder.trunk.blocks.18.norm2.bias', 'sam_mask_decoder.transformer.layers.0.norm2.weight', 'memory_attention.layers.1.norm3.weight', 'image_encoder.trunk.blocks.21.norm1.bias', 'image_encoder.trunk.blocks.21.norm1.weight', 'image_encoder.trunk.blocks.3.norm1.bias', 'image_encoder.trunk.blocks.10.norm2.bias', 'image_encoder.trunk.blocks.10.norm2.weight', 'image_encoder.trunk.blocks.6.norm2.bias', 'sam_mask_decoder.transformer.layers.0.norm2.bias', 'memory_attention.layers.3.norm2.weight', 'image_encoder.trunk.blocks.13.norm2.bias', 'image_encoder.trunk.blocks.4.norm2.bias', 'memory_attention.layers.1.norm2.bias', 'image_encoder.trunk.blocks.5.norm1.bias', 'image_encoder.trunk.blocks.3.norm2.bias', 'image_encoder.trunk.blocks.10.norm1.bias', 'memory_attention.layers.2.norm2.weight', 'sam_mask_decoder.transformer.layers.1.norm4.bias', 'image_encoder.trunk.blocks.0.norm2.bias', 'image_encoder.trunk.blocks.5.norm1.weight', 'image_encoder.trunk.blocks.13.norm1.bias', 'memory_attention.layers.3.norm3.weight', 'image_encoder.trunk.blocks.9.norm2.bias', 'image_encoder.trunk.blocks.1.norm2.bias', 'sam_mask_decoder.transformer.layers.1.norm1.weight'} 
+Raw dataset length = 10
+INFO 2026-09-28 22:43:04,252 sam2_datasets.py: 125: Dataset mixing probabilities: [1.0]
+INFO 2026-09-28 22:43:04,486 trainer.py: 417: Loading pretrained checkpoint from {'_partial_': True, '_target_': 'training.utils.checkpoint_utils.load_state_dict_into_model', 'strict': True, 'ignore_unexpected_keys': None, 'ignore_missing_keys': None, 'state_dict': {'_target_': 'training.utils.checkpoint_utils.load_checkpoint_and_apply_kernels', 'checkpoint_path': './checkpoints/sam2.1_hiera_base_plus.pt', 'ckpt_state_dict_keys': ['model']}}
+/data1/workspace/tien.nguyen/miniconda3/envs/sam2/lib/python3.14/site-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+  return func(*args, **kwargs)
+/data1/workspace/tien.nguyen/project/sam2/training/trainer.py:861: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with torch.cuda.amp.autocast(
+/data1/workspace/tien.nguyen/miniconda3/envs/sam2/lib/python3.14/site-packages/torch/autograd/graph.py:1072: UserWarning: Grad strides do not match bucket view strides. This may indicate grad was not created according to the gradient layout contract, or that the param's strides changed since DDP was constructed.  This is not an error, but may impair performance.
+grad.sizes() = [64, 256, 1, 1], strides() = [256, 1, 256, 256]
+bucket_view.sizes() = [64, 256, 1, 1], strides() = [256, 1, 1, 1] (Triggered internally at /__w/pytorch/pytorch/torch/csrc/distributed/c10d/reducer.cpp:335.)
+  return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+INFO 2026-09-28 22:43:11,808 train_utils.py: 271: Train Epoch: [0][0/5] | Batch Time: 6.99 (6.99) | Data Time: 3.87 (3.87) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 00m | Losses/train_all_loss: 1.87e+01 (1.87e+01)
+INFO 2026-09-28 22:43:14,663 trainer.py: 950: Estimated time remaining: 00d 00h 05m
+INFO 2026-09-28 22:43:14,663 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:43:14,664 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 14.577330017089844, 'Losses/train_all_loss_mask': 0.3205463647842407, 'Losses/train_all_loss_dice': 0.23918059170246125, 'Losses/train_all_loss_iou': 0.748048996925354, 'Losses/train_all_loss_class': 7.1791736602783205, 'Losses/train_all_core_loss': 14.577330017089844, 'Trainer/where': 0.02, 'Trainer/epoch': 0, 'Trainer/steps_train': 5}
+INFO 2026-09-28 22:43:18,723 train_utils.py: 271: Train Epoch: [1][0/5] | Batch Time: 3.60 (3.60) | Data Time: 3.52 (3.52) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 00m | Losses/train_all_loss: 9.91e+00 (9.91e+00)
+INFO 2026-09-28 22:43:20,466 trainer.py: 950: Estimated time remaining: 00d 00h 02m
+INFO 2026-09-28 22:43:20,466 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:43:20,466 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 10.19933385848999, 'Losses/train_all_loss_mask': 0.15555234998464584, 'Losses/train_all_loss_dice': 0.30009905695915223, 'Losses/train_all_loss_iou': 0.7016970634460449, 'Losses/train_all_loss_class': 6.086490821838379, 'Losses/train_all_core_loss': 10.19933385848999, 'Trainer/where': 0.045, 'Trainer/epoch': 1, 'Trainer/steps_train': 10}
+INFO 2026-09-28 22:43:24,300 train_utils.py: 271: Train Epoch: [2][0/5] | Batch Time: 3.38 (3.38) | Data Time: 3.18 (3.18) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 00m | Losses/train_all_loss: 1.36e+01 (1.36e+01)
+INFO 2026-09-28 22:43:25,988 trainer.py: 950: Estimated time remaining: 00d 00h 02m
+INFO 2026-09-28 22:43:25,988 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:43:25,988 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 9.983405494689942, 'Losses/train_all_loss_mask': 0.16299911737442016, 'Losses/train_all_loss_dice': 0.2696236550807953, 'Losses/train_all_loss_iou': 0.5914446175098419, 'Losses/train_all_loss_class': 5.862354755401611, 'Losses/train_all_core_loss': 9.983405494689942, 'Trainer/where': 0.06999999999999999, 'Trainer/epoch': 2, 'Trainer/steps_train': 15}
+INFO 2026-09-28 22:43:30,108 train_utils.py: 271: Train Epoch: [3][0/5] | Batch Time: 3.62 (3.62) | Data Time: 3.45 (3.45) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 00m | Losses/train_all_loss: 6.99e+00 (6.99e+00)
+INFO 2026-09-28 22:43:32,962 trainer.py: 950: Estimated time remaining: 00d 00h 03m
+INFO 2026-09-28 22:43:32,963 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:43:32,963 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 7.711506748199463, 'Losses/train_all_loss_mask': 0.11532464735209942, 'Losses/train_all_loss_dice': 0.28353276252746584, 'Losses/train_all_loss_iou': 0.5755377650260926, 'Losses/train_all_loss_class': 4.545943355560302, 'Losses/train_all_core_loss': 7.711506748199463, 'Trainer/where': 0.095, 'Trainer/epoch': 3, 'Trainer/steps_train': 20}
+INFO 2026-09-28 22:43:37,393 train_utils.py: 271: Train Epoch: [4][0/5] | Batch Time: 3.94 (3.94) | Data Time: 3.76 (3.76) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 00m | Losses/train_all_loss: 6.32e+00 (6.32e+00)
+INFO 2026-09-28 22:43:39,756 trainer.py: 950: Estimated time remaining: 00d 00h 02m
+INFO 2026-09-28 22:43:39,756 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:43:39,756 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 7.627856826782226, 'Losses/train_all_loss_mask': 0.14616172276437284, 'Losses/train_all_loss_dice': 0.21051326990127564, 'Losses/train_all_loss_iou': 0.5285764932632446, 'Losses/train_all_loss_class': 3.965532636642456, 'Losses/train_all_core_loss': 7.627856826782226, 'Trainer/where': 0.12, 'Trainer/epoch': 4, 'Trainer/steps_train': 25}
+INFO 2026-09-28 22:43:44,009 train_utils.py: 271: Train Epoch: [5][0/5] | Batch Time: 3.59 (3.59) | Data Time: 3.41 (3.41) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 00m | Losses/train_all_loss: 5.94e+00 (5.94e+00)
+INFO 2026-09-28 22:43:45,910 trainer.py: 950: Estimated time remaining: 00d 00h 02m
+INFO 2026-09-28 22:43:45,911 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:43:45,911 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 4.785438442230225, 'Losses/train_all_loss_mask': 0.0719762347638607, 'Losses/train_all_loss_dice': 0.28166218996047976, 'Losses/train_all_loss_iou': 0.41066635847091676, 'Losses/train_all_loss_class': 2.653585124015808, 'Losses/train_all_core_loss': 4.785438442230225, 'Trainer/where': 0.145, 'Trainer/epoch': 5, 'Trainer/steps_train': 30}
+INFO 2026-09-28 22:43:49,737 train_utils.py: 271: Train Epoch: [6][0/5] | Batch Time: 3.34 (3.34) | Data Time: 3.14 (3.14) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 00m | Losses/train_all_loss: 5.88e+00 (5.88e+00)
+INFO 2026-09-28 22:43:51,444 trainer.py: 950: Estimated time remaining: 00d 00h 02m
+INFO 2026-09-28 22:43:51,445 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:43:51,445 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 4.0474811553955075, 'Losses/train_all_loss_mask': 0.06336796060204505, 'Losses/train_all_loss_dice': 0.3284964203834534, 'Losses/train_all_loss_iou': 0.4619742751121521, 'Losses/train_all_loss_class': 1.9896512389183045, 'Losses/train_all_core_loss': 4.0474811553955075, 'Trainer/where': 0.16999999999999998, 'Trainer/epoch': 6, 'Trainer/steps_train': 35}
+INFO 2026-09-28 22:43:55,710 train_utils.py: 271: Train Epoch: [7][0/5] | Batch Time: 3.78 (3.78) | Data Time: 3.67 (3.67) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 00m | Losses/train_all_loss: 2.45e+00 (2.45e+00)
+INFO 2026-09-28 22:43:57,270 trainer.py: 950: Estimated time remaining: 00d 00h 02m
+INFO 2026-09-28 22:43:57,271 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:43:57,271 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 3.678960609436035, 'Losses/train_all_loss_mask': 0.08527865260839462, 'Losses/train_all_loss_dice': 0.25396780371665956, 'Losses/train_all_loss_iou': 0.5716681182384491, 'Losses/train_all_loss_class': 1.1477516353130341, 'Losses/train_all_core_loss': 3.678960609436035, 'Trainer/where': 0.195, 'Trainer/epoch': 7, 'Trainer/steps_train': 40}
+INFO 2026-09-28 22:44:01,504 train_utils.py: 271: Train Epoch: [8][0/5] | Batch Time: 3.83 (3.83) | Data Time: 3.72 (3.72) | Mem (GB): 3.00 (3.00/3.00) | Time Elapsed: 00d 00h 00m | Losses/train_all_loss: 2.76e+00 (2.76e+00)
+INFO 2026-09-28 22:44:02,976 trainer.py: 950: Estimated time remaining: 00d 00h 02m
+INFO 2026-09-28 22:44:02,976 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:44:02,977 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 3.3935380458831785, 'Losses/train_all_loss_mask': 0.08488594368100166, 'Losses/train_all_loss_dice': 0.27789691388607024, 'Losses/train_all_loss_iou': 0.5026861280202866, 'Losses/train_all_loss_class': 0.9152360647916794, 'Losses/train_all_core_loss': 3.3935380458831785, 'Trainer/where': 0.22000000000000003, 'Trainer/epoch': 8, 'Trainer/steps_train': 45}
+INFO 2026-09-28 22:44:07,027 train_utils.py: 271: Train Epoch: [9][0/5] | Batch Time: 3.63 (3.63) | Data Time: 3.44 (3.44) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 01m | Losses/train_all_loss: 2.87e+00 (2.87e+00)
+INFO 2026-09-28 22:44:09,077 trainer.py: 950: Estimated time remaining: 00d 00h 02m
+INFO 2026-09-28 22:44:09,078 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:44:09,078 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 2.6968679904937742, 'Losses/train_all_loss_mask': 0.05114522632211447, 'Losses/train_all_loss_dice': 0.2482329249382019, 'Losses/train_all_loss_iou': 0.45325297117233276, 'Losses/train_all_loss_class': 0.9724775969982147, 'Losses/train_all_core_loss': 2.6968679904937742, 'Trainer/where': 0.24500000000000002, 'Trainer/epoch': 9, 'Trainer/steps_train': 50}
+INFO 2026-09-28 22:44:13,062 train_utils.py: 271: Train Epoch: [10][0/5] | Batch Time: 3.53 (3.53) | Data Time: 3.44 (3.44) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 01m | Losses/train_all_loss: 2.82e+00 (2.82e+00)
+INFO 2026-09-28 22:44:14,872 trainer.py: 950: Estimated time remaining: 00d 00h 01m
+INFO 2026-09-28 22:44:14,873 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:44:14,873 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 2.777421236038208, 'Losses/train_all_loss_mask': 0.04207195807248354, 'Losses/train_all_loss_dice': 0.27916705012321474, 'Losses/train_all_loss_iou': 0.36782493591308596, 'Losses/train_all_loss_class': 1.2889901399612427, 'Losses/train_all_core_loss': 2.777421236038208, 'Trainer/where': 0.27, 'Trainer/epoch': 10, 'Trainer/steps_train': 55}
+INFO 2026-09-28 22:44:18,283 train_utils.py: 271: Train Epoch: [11][0/5] | Batch Time: 2.92 (2.92) | Data Time: 2.84 (2.84) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 01m | Losses/train_all_loss: 4.82e+00 (4.82e+00)
+INFO 2026-09-28 22:44:20,037 trainer.py: 950: Estimated time remaining: 00d 00h 01m
+INFO 2026-09-28 22:44:20,038 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:44:20,038 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 3.1667028427124024, 'Losses/train_all_loss_mask': 0.08116781674325466, 'Losses/train_all_loss_dice': 0.23278662860393523, 'Losses/train_all_loss_iou': 0.5265157699584961, 'Losses/train_all_loss_class': 0.7840442128479481, 'Losses/train_all_core_loss': 3.1667028427124024, 'Trainer/where': 0.29500000000000004, 'Trainer/epoch': 11, 'Trainer/steps_train': 60}
+INFO 2026-09-28 22:44:24,191 train_utils.py: 271: Train Epoch: [12][0/5] | Batch Time: 3.66 (3.66) | Data Time: 3.46 (3.46) | Mem (GB): 3.00 (3.00/3.00) | Time Elapsed: 00d 00h 01m | Losses/train_all_loss: 2.00e+00 (2.00e+00)
+INFO 2026-09-28 22:44:25,936 trainer.py: 950: Estimated time remaining: 00d 00h 01m
+INFO 2026-09-28 22:44:25,937 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:44:25,937 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 2.6984770774841307, 'Losses/train_all_loss_mask': 0.0511964924633503, 'Losses/train_all_loss_dice': 0.29197355210781095, 'Losses/train_all_loss_iou': 0.44267726242542266, 'Losses/train_all_loss_class': 0.9398964047431946, 'Losses/train_all_core_loss': 2.6984770774841307, 'Trainer/where': 0.32, 'Trainer/epoch': 12, 'Trainer/steps_train': 65}
+INFO 2026-09-28 22:44:30,021 train_utils.py: 271: Train Epoch: [13][0/5] | Batch Time: 3.62 (3.62) | Data Time: 3.44 (3.44) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 01m | Losses/train_all_loss: 5.23e+00 (5.23e+00)
+INFO 2026-09-28 22:44:31,912 trainer.py: 950: Estimated time remaining: 00d 00h 01m
+INFO 2026-09-28 22:44:31,912 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:44:31,912 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 3.3568318843841554, 'Losses/train_all_loss_mask': 0.09421280547976493, 'Losses/train_all_loss_dice': 0.3213867425918579, 'Losses/train_all_loss_iou': 0.47915158867836, 'Losses/train_all_loss_class': 0.6720374405384064, 'Losses/train_all_core_loss': 3.3568318843841554, 'Trainer/where': 0.34500000000000003, 'Trainer/epoch': 13, 'Trainer/steps_train': 70}
+WARNING:root:Skip RandomAffine for zero-area mask in first frame after 1 tentatives
+INFO 2026-09-28 22:44:36,098 train_utils.py: 271: Train Epoch: [14][0/5] | Batch Time: 3.68 (3.68) | Data Time: 3.49 (3.49) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 01m | Losses/train_all_loss: 1.81e+00 (1.81e+00)
+INFO 2026-09-28 22:44:38,076 trainer.py: 950: Estimated time remaining: 00d 00h 01m
+INFO 2026-09-28 22:44:38,076 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:44:38,077 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 2.5085593461990356, 'Losses/train_all_loss_mask': 0.05838089287281036, 'Losses/train_all_loss_dice': 0.33405460715293883, 'Losses/train_all_loss_iou': 0.49948676824569704, 'Losses/train_all_loss_class': 0.5074000835418702, 'Losses/train_all_core_loss': 2.5085593461990356, 'Trainer/where': 0.37, 'Trainer/epoch': 14, 'Trainer/steps_train': 75}
+INFO 2026-09-28 22:44:42,034 train_utils.py: 271: Train Epoch: [15][0/5] | Batch Time: 3.50 (3.50) | Data Time: 3.33 (3.33) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 01m | Losses/train_all_loss: 2.92e+00 (2.92e+00)
+INFO 2026-09-28 22:44:44,077 trainer.py: 950: Estimated time remaining: 00d 00h 01m
+INFO 2026-09-28 22:44:44,077 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:44:44,077 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 2.4192867517471313, 'Losses/train_all_loss_mask': 0.04207129739224911, 'Losses/train_all_loss_dice': 0.3460459768772125, 'Losses/train_all_loss_iou': 0.48585336804389956, 'Losses/train_all_loss_class': 0.7459614038467407, 'Losses/train_all_core_loss': 2.4192867517471313, 'Trainer/where': 0.395, 'Trainer/epoch': 15, 'Trainer/steps_train': 80}
+INFO 2026-09-28 22:44:47,903 train_utils.py: 271: Train Epoch: [16][0/5] | Batch Time: 3.34 (3.34) | Data Time: 3.26 (3.26) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 01m | Losses/train_all_loss: 2.19e+00 (2.19e+00)
+INFO 2026-09-28 22:44:49,598 trainer.py: 950: Estimated time remaining: 00d 00h 01m
+INFO 2026-09-28 22:44:49,598 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:44:49,598 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 2.341455841064453, 'Losses/train_all_loss_mask': 0.04208299517631531, 'Losses/train_all_loss_dice': 0.3700137257575989, 'Losses/train_all_loss_iou': 0.358746212720871, 'Losses/train_all_loss_class': 0.7710359990596771, 'Losses/train_all_core_loss': 2.341455841064453, 'Trainer/where': 0.42000000000000004, 'Trainer/epoch': 16, 'Trainer/steps_train': 85}
+INFO 2026-09-28 22:44:53,522 train_utils.py: 271: Train Epoch: [17][0/5] | Batch Time: 3.46 (3.46) | Data Time: 3.28 (3.28) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 01m | Losses/train_all_loss: 2.21e+00 (2.21e+00)
+INFO 2026-09-28 22:44:55,340 trainer.py: 950: Estimated time remaining: 00d 00h 01m
+INFO 2026-09-28 22:44:55,341 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:44:55,341 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 2.0206873416900635, 'Losses/train_all_loss_mask': 0.04426004737615585, 'Losses/train_all_loss_dice': 0.3290836617350578, 'Losses/train_all_loss_iou': 0.3104238837957382, 'Losses/train_all_loss_class': 0.49597888588905337, 'Losses/train_all_core_loss': 2.0206873416900635, 'Trainer/where': 0.445, 'Trainer/epoch': 17, 'Trainer/steps_train': 90}
+INFO 2026-09-28 22:44:59,378 train_utils.py: 271: Train Epoch: [18][0/5] | Batch Time: 3.58 (3.58) | Data Time: 3.51 (3.51) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 01m | Losses/train_all_loss: 2.13e+00 (2.13e+00)
+INFO 2026-09-28 22:45:00,839 trainer.py: 950: Estimated time remaining: 00d 00h 01m
+INFO 2026-09-28 22:45:00,840 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:45:00,840 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 2.2157785892486572, 'Losses/train_all_loss_mask': 0.04125579111278057, 'Losses/train_all_loss_dice': 0.33222526907920835, 'Losses/train_all_loss_iou': 0.3166819214820862, 'Losses/train_all_loss_class': 0.7417555987834931, 'Losses/train_all_core_loss': 2.2157785892486572, 'Trainer/where': 0.47000000000000003, 'Trainer/epoch': 18, 'Trainer/steps_train': 95}
+INFO 2026-09-28 22:45:05,088 train_utils.py: 271: Train Epoch: [19][0/5] | Batch Time: 3.64 (3.64) | Data Time: 3.54 (3.54) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 02m | Losses/train_all_loss: 1.62e+00 (1.62e+00)
+INFO 2026-09-28 22:45:06,779 trainer.py: 950: Estimated time remaining: 00d 00h 01m
+INFO 2026-09-28 22:45:06,780 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:45:06,780 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 1.6981690406799317, 'Losses/train_all_loss_mask': 0.03457548841834068, 'Losses/train_all_loss_dice': 0.3306503355503082, 'Losses/train_all_loss_iou': 0.33985371291637423, 'Losses/train_all_loss_class': 0.3361552685499191, 'Losses/train_all_core_loss': 1.6981690406799317, 'Trainer/where': 0.495, 'Trainer/epoch': 19, 'Trainer/steps_train': 100}
+INFO 2026-09-28 22:45:10,806 train_utils.py: 271: Train Epoch: [20][0/5] | Batch Time: 3.58 (3.58) | Data Time: 3.41 (3.41) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 02m | Losses/train_all_loss: 1.57e+00 (1.57e+00)
+INFO 2026-09-28 22:45:12,615 trainer.py: 950: Estimated time remaining: 00d 00h 01m
+INFO 2026-09-28 22:45:12,616 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:45:12,616 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 2.1387405157089234, 'Losses/train_all_loss_mask': 0.04181384406983853, 'Losses/train_all_loss_dice': 0.24831061959266662, 'Losses/train_all_loss_iou': 0.42703763842582704, 'Losses/train_all_loss_class': 0.6271153450012207, 'Losses/train_all_core_loss': 2.1387405157089234, 'Trainer/where': 0.52, 'Trainer/epoch': 20, 'Trainer/steps_train': 105}
+INFO 2026-09-28 22:45:16,551 train_utils.py: 271: Train Epoch: [21][0/5] | Batch Time: 3.49 (3.49) | Data Time: 3.39 (3.39) | Mem (GB): 3.00 (3.00/3.00) | Time Elapsed: 00d 00h 02m | Losses/train_all_loss: 1.92e+00 (1.92e+00)
+INFO 2026-09-28 22:45:18,015 trainer.py: 950: Estimated time remaining: 00d 00h 01m
+INFO 2026-09-28 22:45:18,016 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:45:18,016 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 1.8779830574989318, 'Losses/train_all_loss_mask': 0.0317465603351593, 'Losses/train_all_loss_dice': 0.3064703315496445, 'Losses/train_all_loss_iou': 0.35049363374710085, 'Losses/train_all_loss_class': 0.5860878869891166, 'Losses/train_all_core_loss': 1.8779830574989318, 'Trainer/where': 0.545, 'Trainer/epoch': 21, 'Trainer/steps_train': 110}
+INFO 2026-09-28 22:45:21,850 train_utils.py: 271: Train Epoch: [22][0/5] | Batch Time: 3.40 (3.40) | Data Time: 3.33 (3.33) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 02m | Losses/train_all_loss: 2.56e+00 (2.56e+00)
+INFO 2026-09-28 22:45:23,660 trainer.py: 950: Estimated time remaining: 00d 00h 01m
+INFO 2026-09-28 22:45:23,660 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:45:23,660 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 2.0022566318511963, 'Losses/train_all_loss_mask': 0.04037015214562416, 'Losses/train_all_loss_dice': 0.32957339882850645, 'Losses/train_all_loss_iou': 0.3465082049369812, 'Losses/train_all_loss_class': 0.5187719821929931, 'Losses/train_all_core_loss': 2.0022566318511963, 'Trainer/where': 0.5700000000000001, 'Trainer/epoch': 22, 'Trainer/steps_train': 115}
+INFO 2026-09-28 22:45:27,278 train_utils.py: 271: Train Epoch: [23][0/5] | Batch Time: 3.17 (3.17) | Data Time: 2.98 (2.98) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 02m | Losses/train_all_loss: 1.84e+00 (1.84e+00)
+INFO 2026-09-28 22:45:29,697 trainer.py: 950: Estimated time remaining: 00d 00h 01m
+INFO 2026-09-28 22:45:29,697 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:45:29,697 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 1.9368306159973145, 'Losses/train_all_loss_mask': 0.02955218069255352, 'Losses/train_all_loss_dice': 0.3364172697067261, 'Losses/train_all_loss_iou': 0.40402711629867555, 'Losses/train_all_loss_class': 0.6053426370024682, 'Losses/train_all_core_loss': 1.9368306159973145, 'Trainer/where': 0.595, 'Trainer/epoch': 23, 'Trainer/steps_train': 120}
+INFO 2026-09-28 22:45:33,566 train_utils.py: 271: Train Epoch: [24][0/5] | Batch Time: 3.40 (3.40) | Data Time: 3.32 (3.32) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 02m | Losses/train_all_loss: 1.55e+00 (1.55e+00)
+INFO 2026-09-28 22:45:35,162 trainer.py: 950: Estimated time remaining: 00d 00h 01m
+INFO 2026-09-28 22:45:35,163 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:45:35,163 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 2.1384676933288573, 'Losses/train_all_loss_mask': 0.039522286131978036, 'Losses/train_all_loss_dice': 0.3544963300228119, 'Losses/train_all_loss_iou': 0.4064279437065125, 'Losses/train_all_loss_class': 0.5870977222919465, 'Losses/train_all_core_loss': 2.1384676933288573, 'Trainer/where': 0.62, 'Trainer/epoch': 24, 'Trainer/steps_train': 125}
+INFO 2026-09-28 22:45:38,934 train_utils.py: 271: Train Epoch: [25][0/5] | Batch Time: 3.18 (3.18) | Data Time: 3.01 (3.01) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 02m | Losses/train_all_loss: 2.06e+00 (2.06e+00)
+WARNING:root:Skip RandomAffine for zero-area mask in first frame after 1 tentatives
+INFO 2026-09-28 22:45:40,514 trainer.py: 950: Estimated time remaining: 00d 00h 00m
+INFO 2026-09-28 22:45:40,515 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:45:40,515 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 2.0738036155700685, 'Losses/train_all_loss_mask': 0.0353863175958395, 'Losses/train_all_loss_dice': 0.3129512995481491, 'Losses/train_all_loss_iou': 0.3785702556371689, 'Losses/train_all_loss_class': 0.6745556801557541, 'Losses/train_all_core_loss': 2.0738036155700685, 'Trainer/where': 0.645, 'Trainer/epoch': 25, 'Trainer/steps_train': 130}
+INFO 2026-09-28 22:45:44,067 train_utils.py: 271: Train Epoch: [26][0/5] | Batch Time: 2.98 (2.98) | Data Time: 2.82 (2.82) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 02m | Losses/train_all_loss: 2.97e+00 (2.97e+00)
+INFO 2026-09-28 22:45:45,712 trainer.py: 950: Estimated time remaining: 00d 00h 00m
+INFO 2026-09-28 22:45:45,713 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:45:45,713 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 1.7782490968704223, 'Losses/train_all_loss_mask': 0.021097220480442047, 'Losses/train_all_loss_dice': 0.29544066786766054, 'Losses/train_all_loss_iou': 0.33602207601070405, 'Losses/train_all_loss_class': 0.7248419061303139, 'Losses/train_all_core_loss': 1.7782490968704223, 'Trainer/where': 0.67, 'Trainer/epoch': 26, 'Trainer/steps_train': 135}
+INFO 2026-09-28 22:45:49,193 train_utils.py: 271: Train Epoch: [27][0/5] | Batch Time: 3.07 (3.07) | Data Time: 2.97 (2.97) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 02m | Losses/train_all_loss: 2.54e+00 (2.54e+00)
+INFO 2026-09-28 22:45:51,192 trainer.py: 950: Estimated time remaining: 00d 00h 00m
+INFO 2026-09-28 22:45:51,192 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:45:51,193 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 2.3250792145729067, 'Losses/train_all_loss_mask': 0.033001708984375, 'Losses/train_all_loss_dice': 0.33893893361091615, 'Losses/train_all_loss_iou': 0.3195090502500534, 'Losses/train_all_loss_class': 1.006597065925598, 'Losses/train_all_core_loss': 2.3250792145729067, 'Trainer/where': 0.6950000000000001, 'Trainer/epoch': 27, 'Trainer/steps_train': 140}
+INFO 2026-09-28 22:45:55,291 train_utils.py: 271: Train Epoch: [28][0/5] | Batch Time: 3.67 (3.67) | Data Time: 3.48 (3.48) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 02m | Losses/train_all_loss: 2.44e+00 (2.44e+00)
+INFO 2026-09-28 22:45:56,747 trainer.py: 950: Estimated time remaining: 00d 00h 00m
+INFO 2026-09-28 22:45:56,747 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:45:56,747 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 1.6208948850631715, 'Losses/train_all_loss_mask': 0.025200574472546578, 'Losses/train_all_loss_dice': 0.39174243807792664, 'Losses/train_all_loss_iou': 0.29252351224422457, 'Losses/train_all_loss_class': 0.4326174080371857, 'Losses/train_all_core_loss': 1.6208948850631715, 'Trainer/where': 0.72, 'Trainer/epoch': 28, 'Trainer/steps_train': 145}
+INFO 2026-09-28 22:46:00,740 train_utils.py: 271: Train Epoch: [29][0/5] | Batch Time: 3.57 (3.57) | Data Time: 3.48 (3.48) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 02m | Losses/train_all_loss: 2.32e+00 (2.32e+00)
+INFO 2026-09-28 22:46:01,978 trainer.py: 950: Estimated time remaining: 00d 00h 00m
+INFO 2026-09-28 22:46:01,979 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:46:01,979 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 2.0403249502182006, 'Losses/train_all_loss_mask': 0.03718380630016327, 'Losses/train_all_loss_dice': 0.3834617644548416, 'Losses/train_all_loss_iou': 0.41013501584529877, 'Losses/train_all_loss_class': 0.5030520364642144, 'Losses/train_all_core_loss': 2.0403249502182006, 'Trainer/where': 0.745, 'Trainer/epoch': 29, 'Trainer/steps_train': 150}
+INFO 2026-09-28 22:46:06,812 train_utils.py: 271: Train Epoch: [30][0/5] | Batch Time: 4.42 (4.42) | Data Time: 4.22 (4.22) | Mem (GB): 3.00 (3.00/3.00) | Time Elapsed: 00d 00h 03m | Losses/train_all_loss: 2.69e+00 (2.69e+00)
+INFO 2026-09-28 22:46:08,860 trainer.py: 950: Estimated time remaining: 00d 00h 00m
+INFO 2026-09-28 22:46:08,860 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:46:08,860 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 2.115849232673645, 'Losses/train_all_loss_mask': 0.04672281295061111, 'Losses/train_all_loss_dice': 0.31582390666008, 'Losses/train_all_loss_iou': 0.38700765520334246, 'Losses/train_all_loss_class': 0.4785614162683487, 'Losses/train_all_core_loss': 2.115849232673645, 'Trainer/where': 0.77, 'Trainer/epoch': 30, 'Trainer/steps_train': 155}
+INFO 2026-09-28 22:46:12,646 train_utils.py: 271: Train Epoch: [31][0/5] | Batch Time: 3.33 (3.33) | Data Time: 3.15 (3.15) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 03m | Losses/train_all_loss: 1.30e+00 (1.30e+00)
+INFO 2026-09-28 22:46:14,999 trainer.py: 950: Estimated time remaining: 00d 00h 00m
+INFO 2026-09-28 22:46:15,000 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:46:15,000 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 1.7874991178512574, 'Losses/train_all_loss_mask': 0.02663988620042801, 'Losses/train_all_loss_dice': 0.29362485706806185, 'Losses/train_all_loss_iou': 0.4032242864370346, 'Losses/train_all_loss_class': 0.5578522220253944, 'Losses/train_all_core_loss': 1.7874991178512574, 'Trainer/where': 0.795, 'Trainer/epoch': 31, 'Trainer/steps_train': 160}
+WARNING:root:Skip RandomAffine for zero-area mask in first frame after 1 tentatives
+INFO 2026-09-28 22:46:19,189 train_utils.py: 271: Train Epoch: [32][0/5] | Batch Time: 3.72 (3.72) | Data Time: 3.63 (3.63) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 03m | Losses/train_all_loss: 1.23e+00 (1.23e+00)
+INFO 2026-09-28 22:46:20,982 trainer.py: 950: Estimated time remaining: 00d 00h 00m
+INFO 2026-09-28 22:46:20,983 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:46:20,983 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 1.8433653831481933, 'Losses/train_all_loss_mask': 0.02686064038425684, 'Losses/train_all_loss_dice': 0.2775486379861832, 'Losses/train_all_loss_iou': 0.38587865233421326, 'Losses/train_all_loss_class': 0.6427253037691116, 'Losses/train_all_core_loss': 1.8433653831481933, 'Trainer/where': 0.82, 'Trainer/epoch': 32, 'Trainer/steps_train': 165}
+INFO 2026-09-28 22:46:24,800 train_utils.py: 271: Train Epoch: [33][0/5] | Batch Time: 3.35 (3.35) | Data Time: 3.15 (3.15) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 03m | Losses/train_all_loss: 1.11e+00 (1.11e+00)
+INFO 2026-09-28 22:46:26,928 trainer.py: 950: Estimated time remaining: 00d 00h 00m
+INFO 2026-09-28 22:46:26,929 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:46:26,929 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 1.7223150253295898, 'Losses/train_all_loss_mask': 0.028867719881236552, 'Losses/train_all_loss_dice': 0.3185596913099289, 'Losses/train_all_loss_iou': 0.23232885599136352, 'Losses/train_all_loss_class': 0.5940721035003662, 'Losses/train_all_core_loss': 1.7223150253295898, 'Trainer/where': 0.845, 'Trainer/epoch': 33, 'Trainer/steps_train': 170}
+WARNING:root:Skip RandomAffine for zero-area mask in first frame after 1 tentatives
+INFO 2026-09-28 22:46:31,315 train_utils.py: 271: Train Epoch: [34][0/5] | Batch Time: 3.95 (3.95) | Data Time: 3.74 (3.74) | Mem (GB): 3.00 (3.00/3.00) | Time Elapsed: 00d 00h 03m | Losses/train_all_loss: 1.32e+00 (1.32e+00)
+INFO 2026-09-28 22:46:33,101 trainer.py: 950: Estimated time remaining: 00d 00h 00m
+INFO 2026-09-28 22:46:33,102 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:46:33,102 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 1.6766859650611878, 'Losses/train_all_loss_mask': 0.03516918979585171, 'Losses/train_all_loss_dice': 0.27032129764556884, 'Losses/train_all_loss_iou': 0.43421995639801025, 'Losses/train_all_loss_class': 0.26876088976860046, 'Losses/train_all_core_loss': 1.6766859650611878, 'Trainer/where': 0.8699999999999999, 'Trainer/epoch': 34, 'Trainer/steps_train': 175}
+INFO 2026-09-28 22:46:36,923 train_utils.py: 271: Train Epoch: [35][0/5] | Batch Time: 3.37 (3.37) | Data Time: 3.28 (3.28) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 03m | Losses/train_all_loss: 2.29e+00 (2.29e+00)
+INFO 2026-09-28 22:46:38,574 trainer.py: 950: Estimated time remaining: 00d 00h 00m
+INFO 2026-09-28 22:46:38,575 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:46:38,575 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 1.7257142305374145, 'Losses/train_all_loss_mask': 0.03477130848914385, 'Losses/train_all_loss_dice': 0.33905898928642275, 'Losses/train_all_loss_iou': 0.32318010926246643, 'Losses/train_all_loss_class': 0.3680489227175713, 'Losses/train_all_core_loss': 1.7257142305374145, 'Trainer/where': 0.8949999999999999, 'Trainer/epoch': 35, 'Trainer/steps_train': 180}
+INFO 2026-09-28 22:46:42,851 train_utils.py: 271: Train Epoch: [36][0/5] | Batch Time: 3.74 (3.74) | Data Time: 3.56 (3.56) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 03m | Losses/train_all_loss: 1.84e+00 (1.84e+00)
+INFO 2026-09-28 22:46:44,719 trainer.py: 950: Estimated time remaining: 00d 00h 00m
+INFO 2026-09-28 22:46:44,719 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:46:44,719 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 2.199853301048279, 'Losses/train_all_loss_mask': 0.0404210414737463, 'Losses/train_all_loss_dice': 0.35285874307155607, 'Losses/train_all_loss_iou': 0.35949101448059084, 'Losses/train_all_loss_class': 0.6790827095508576, 'Losses/train_all_core_loss': 2.199853301048279, 'Trainer/where': 0.9199999999999999, 'Trainer/epoch': 36, 'Trainer/steps_train': 185}
+INFO 2026-09-28 22:46:48,656 train_utils.py: 271: Train Epoch: [37][0/5] | Batch Time: 3.47 (3.47) | Data Time: 3.29 (3.29) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 03m | Losses/train_all_loss: 1.80e+00 (1.80e+00)
+INFO 2026-09-28 22:46:50,406 trainer.py: 950: Estimated time remaining: 00d 00h 00m
+INFO 2026-09-28 22:46:50,407 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:46:50,407 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 1.8248443603515625, 'Losses/train_all_loss_mask': 0.03286337181925773, 'Losses/train_all_loss_dice': 0.33502463698387147, 'Losses/train_all_loss_iou': 0.29258514046669004, 'Losses/train_all_loss_class': 0.53996711820364, 'Losses/train_all_core_loss': 1.8248443603515625, 'Trainer/where': 0.945, 'Trainer/epoch': 37, 'Trainer/steps_train': 190}
+INFO 2026-09-28 22:46:54,612 train_utils.py: 271: Train Epoch: [38][0/5] | Batch Time: 3.61 (3.61) | Data Time: 3.42 (3.42) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 03m | Losses/train_all_loss: 3.31e+00 (3.31e+00)
+INFO 2026-09-28 22:46:56,419 trainer.py: 950: Estimated time remaining: 00d 00h 00m
+INFO 2026-09-28 22:46:56,419 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:46:56,419 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 2.023992919921875, 'Losses/train_all_loss_mask': 0.03212246503680945, 'Losses/train_all_loss_dice': 0.3230109691619873, 'Losses/train_all_loss_iou': 0.3491566821932793, 'Losses/train_all_loss_class': 0.7093760013580322, 'Losses/train_all_core_loss': 2.023992919921875, 'Trainer/where': 0.97, 'Trainer/epoch': 38, 'Trainer/steps_train': 195}
+INFO 2026-09-28 22:47:00,105 train_utils.py: 271: Train Epoch: [39][0/5] | Batch Time: 3.28 (3.28) | Data Time: 3.08 (3.08) | Mem (GB): 2.00 (2.00/2.00) | Time Elapsed: 00d 00h 03m | Losses/train_all_loss: 3.08e+00 (3.08e+00)
+WARNING:root:Skip RandomAffine for zero-area mask in first frame after 1 tentatives
+INFO 2026-09-28 22:47:01,952 trainer.py: 950: Estimated time remaining: 00d 00h 00m
+INFO 2026-09-28 22:47:01,952 trainer.py: 892: Synchronizing meters
+INFO 2026-09-28 22:47:01,953 trainer.py: 830: Losses and meters: {'Losses/train_all_loss': 2.2071634769439696, 'Losses/train_all_loss_mask': 0.04040009975433349, 'Losses/train_all_loss_dice': 0.2907946228981018, 'Losses/train_all_loss_iou': 0.4134209394454956, 'Losses/train_all_loss_class': 0.6949459195137024, 'Losses/train_all_core_loss': 2.2071634769439696, 'Trainer/where': 0.9949999999999999, 'Trainer/epoch': 39, 'Trainer/steps_train': 200}

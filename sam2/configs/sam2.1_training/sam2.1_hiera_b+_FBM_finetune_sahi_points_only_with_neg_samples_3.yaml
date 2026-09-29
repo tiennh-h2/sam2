@@ -2,7 +2,7 @@
 
 scratch:
   resolution: 1024
-  train_batch_size: 2
+  train_batch_size: 32
   num_train_workers: 4
   num_frames: 1
   max_num_objects: 10
@@ -313,7 +313,7 @@ trainer:
     all:
       _target_: training.loss_fns.MultiStepMultiMasksAndIous
       weight_dict:
-        loss_mask: 20
+        loss_mask: 5
         loss_dice: 1
         loss_iou: 1
         loss_class: 1

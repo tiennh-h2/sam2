@@ -29,7 +29,7 @@ class GridNegativeSAM2Train(SAM2Train):
         *args,
         max_ratio_of_negative_objs=1,
         grid_points_per_side=32,
-        debug_dir=None,
+        debug_dir=None, # "/home/tien.nguyen/workspace/project/sam2/.debug",
         debug_every_n_batches=1,
         debug_max_images=1000,
         debug_image_mean=(0.485, 0.456, 0.406),

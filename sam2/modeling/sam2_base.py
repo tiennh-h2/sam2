@@ -368,13 +368,16 @@ class SAM2Base(torch.nn.Module):
         if self.pred_obj_scores:
             is_obj_appearing = object_score_logits > 0
 
-            # Mask used for spatial memories is always a *hard* choice between obj and no obj,
-            # consistent with the actual mask prediction
-            low_res_multimasks = torch.where(
-                is_obj_appearing[:, None, None],
-                low_res_multimasks,
-                NO_OBJ_SCORE,
-            )
+            # Keep raw decoder logits for training losses. Hard gating here
+            # would cut mask gradients when a positive target is misclassified
+            # as absent, while producing a huge loss against NO_OBJ_SCORE.
+            # Object-presence BCE still supervises positive and empty queries.
+            if not self.training:
+                low_res_multimasks = torch.where(
+                    is_obj_appearing[:, None, None],
+                    low_res_multimasks,
+                    NO_OBJ_SCORE,
+                )
 
         # convert masks from possibly bfloat16 (or float16) to float32
         # (older PyTorch versions before 2.1 don't support `interpolate` on bf16)

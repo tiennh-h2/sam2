@@ -101,20 +101,20 @@ def main():
         raise NotADirectoryError(args.test_dir)
 
     sam2 = build_sam2(
-        args.model_cfg, args.checkpoint, device="cuda", apply_postprocessing=False
+        args.model_cfg,
+        args.checkpoint,
+        device="cuda",
+        apply_postprocessing=False,
     )
 
-    # enable_object_score_filter(sam2, min_object_score=0.5)
-    # mask_generator = SAM2AutomaticMaskGenerator(
-    #     sam2, points_per_batch=args.points_per_batch,
-    #     points_per_side=16,
-    #     pred_iou_thresh=0.8, stability_score_thresh=0.95,
-    #     output_mode="binary_mask", use_m2m=False,
-    # )
+    enable_object_score_filter(sam2, min_object_score=0.5)
 
     mask_generator = SAM2AutomaticMaskGenerator(
-        sam2, points_per_batch=args.points_per_batch, output_mode="binary_mask"
+        sam2,
+        points_per_batch=args.points_per_batch,
+        output_mode="binary_mask",
     )
+
     rng = np.random.default_rng(3)
 
     for image_path in sorted(args.test_dir.iterdir()):

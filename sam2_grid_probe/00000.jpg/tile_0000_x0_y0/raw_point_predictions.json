@@ -1,0 +1,70 @@
+[
+  {
+    "point_xy": [
+      736,
+      851
+    ],
+    "object_logit": 0.4329051673412323,
+    "object_probability": 0.6065671443939209,
+    "candidates": [
+      {
+        "candidate": 0,
+        "predicted_iou": 0.3493848741054535,
+        "mask_area_pixels": 28392,
+        "contains_prompt": true,
+        "overlay": "point_x736_y851_candidate0_overlay.png",
+        "mask": "point_x736_y851_candidate0_mask.png"
+      },
+      {
+        "candidate": 1,
+        "predicted_iou": 0.8198572397232056,
+        "mask_area_pixels": 26423,
+        "contains_prompt": true,
+        "overlay": "point_x736_y851_candidate1_overlay.png",
+        "mask": "point_x736_y851_candidate1_mask.png"
+      },
+      {
+        "candidate": 2,
+        "predicted_iou": 0.13004767894744873,
+        "mask_area_pixels": 101694,
+        "contains_prompt": true,
+        "overlay": "point_x736_y851_candidate2_overlay.png",
+        "mask": "point_x736_y851_candidate2_mask.png"
+      }
+    ]
+  },
+  {
+    "point_xy": [
+      1824,
+      851
+    ],
+    "object_logit": -0.1855989694595337,
+    "object_probability": 0.453732967376709,
+    "candidates": [
+      {
+        "candidate": 0,
+        "predicted_iou": 0.2921368479728699,
+        "mask_area_pixels": 109936,
+        "contains_prompt": true,
+        "overlay": "point_x1824_y851_candidate0_overlay.png",
+        "mask": "point_x1824_y851_candidate0_mask.png"
+      },
+      {
+        "candidate": 1,
+        "predicted_iou": 0.9374812841415405,
+        "mask_area_pixels": 35169,
+        "contains_prompt": true,
+        "overlay": "point_x1824_y851_candidate1_overlay.png",
+        "mask": "point_x1824_y851_candidate1_mask.png"
+      },
+      {
+        "candidate": 2,
+        "predicted_iou": 0.22538107633590698,
+        "mask_area_pixels": 112545,
+        "contains_prompt": true,
+        "overlay": "point_x1824_y851_candidate2_overlay.png",
+        "mask": "point_x1824_y851_candidate2_mask.png"
+      }
+    ]
+  }
+]
