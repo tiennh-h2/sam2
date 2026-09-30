@@ -300,13 +300,17 @@ class SAM2AutomaticMaskGenerator:
         self.predictor.reset_predictor()
 
         # Remove duplicates within this crop.
+        print(f"Before NMS: {len(data['rles'])} masks")
+
         keep_by_nms = batched_nms(
             data["boxes"].float(),
             data["iou_preds"],
-            torch.zeros_like(data["boxes"][:, 0]),  # categories
+            torch.zeros_like(data["boxes"][:, 0]),
             iou_threshold=self.box_nms_thresh,
         )
         data.filter(keep_by_nms)
+
+        print(f"After NMS: {len(data['rles'])} masks")
 
         # Return to the original image frame
         data["boxes"] = uncrop_boxes_xyxy(data["boxes"], crop_box)

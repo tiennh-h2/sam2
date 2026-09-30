@@ -367,11 +367,12 @@ class SAM2Base(torch.nn.Module):
 
             # Mask used for spatial memories is always a *hard* choice between obj and no obj,
             # consistent with the actual mask prediction
-            low_res_multimasks = torch.where(
-                is_obj_appearing[:, None, None],
-                low_res_multimasks,
-                NO_OBJ_SCORE,
-            )
+            if not self.training:
+                low_res_multimasks = torch.where(
+                    is_obj_appearing[:, None, None],
+                    low_res_multimasks,
+                    NO_OBJ_SCORE,
+                )
 
         # convert masks from possibly bfloat16 (or float16) to float32
         # (older PyTorch versions before 2.1 don't support `interpolate` on bf16)

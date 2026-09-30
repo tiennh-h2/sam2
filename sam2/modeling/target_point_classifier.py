@@ -6,9 +6,36 @@ from torch import nn
 
 
 class TargetPointClassifier(nn.Module):
-    def __init__(self, channels: int):
+    def __init__(self, channels: int, hidden_channels: int | None = None):
         super().__init__()
-        self.head = nn.Sequential(nn.Conv2d(channels, channels, 1), nn.GELU(), nn.Conv2d(channels, 1, 1))
+        hidden = hidden_channels or channels * 2
+
+        self.head = nn.Sequential(
+            nn.Conv2d(channels, hidden, kernel_size=1),
+            nn.GELU(),
+
+            # Spatial context at low computational cost.
+            nn.Conv2d(
+                hidden, hidden,
+                kernel_size=3,
+                padding=1,
+                groups=hidden,
+            ),
+            nn.GELU(),
+
+            # Mix information across channels.
+            nn.Conv2d(hidden, hidden, kernel_size=1),
+            nn.GELU(),
+
+            nn.Conv2d(hidden, 1, kernel_size=1),
+        )
+
+        for layer in self.head:
+            if isinstance(layer, nn.Conv2d):
+                nn.init.xavier_uniform_(layer.weight)
+                nn.init.zeros_(layer.bias)
+
+        nn.init.xavier_uniform_(self.head[-1].weight, gain=0.1)
 
     def forward(self, features: torch.Tensor) -> torch.Tensor:
         return self.head(features)

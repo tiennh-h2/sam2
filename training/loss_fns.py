@@ -213,6 +213,10 @@ class MultiStepMultiMasksAndIous(nn.Module):
             for k, v in cur_losses.items():
                 losses[k] += v
 
+        for k, v in losses.items():
+            losses[k] = v / len(outs_batch)
+            print(f"Loss {k}: {losses[k].item():.4f}")
+
         return losses
 
     def _forward(self, outputs: Dict, targets: torch.Tensor, num_objects):

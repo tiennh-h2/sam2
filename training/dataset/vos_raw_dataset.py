@@ -102,6 +102,8 @@ class PNGRawDataset(VOSRawDataset):
                 ]
             )
 
+        # self.video_names = [n for n in self.video_names if "RCP" in n]
+
         if frames_sampling_mult:
             video_names_mult = []
             for video_name in self.video_names:

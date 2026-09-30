@@ -2,12 +2,13 @@
 
 scratch:
   # Point classifier is binary: annotated target class versus everything else.
-  target_point_loss_weight: 0.5
+  target_point_loss_weight: 2.0
+  target_point_lr: 1.0e-2
   target_point_grid_size: 32
   target_point_boundary_ignore: 2
-  negative_points_per_image: 0
+  negative_points_per_image: 2
   resolution: 1024
-  train_batch_size: 2
+  train_batch_size: 4
   num_train_workers: 10
   num_frames: 1
   max_num_objects: 10  # Must cover every target instance; truncation creates false negatives.
@@ -18,10 +19,10 @@ scratch:
 
 dataset:
   # PATHS to Dataset
-  img_folder: /home/tien.nguyen/workspace/project/common/data/fbm/commercial/specialty_segmentation_dataset_for_sam2_20260916_sahi/images/train # PATH to MOSE JPEGImages folder
-  gt_folder: /home/tien.nguyen/workspace/project/common/data/fbm/commercial/specialty_segmentation_dataset_for_sam2_20260916_sahi/masks/train  # PATH to MOSE Annotations folder
+  img_folder: /data1/workspace/tien.nguyen/project/common/data/fbm/commercial/specialty_segmentation_dataset_for_sam2_20260916_sahi/images/train/ # PATH to MOSE JPEGImages folder
+  gt_folder: /data1/workspace/tien.nguyen/project/common/data/fbm/commercial/specialty_segmentation_dataset_for_sam2_20260916_sahi/masks/train/  # PATH to MOSE Annotations folder
   file_list_txt: null # Optional PATH to filelist containing a subset of videos to be used for training
-  multiplier: 2
+  multiplier: 1
 
 # Video transforms
 vos:
@@ -68,6 +69,7 @@ trainer:
 
   model:
     _target_: training.model.sam2.SAM2Train
+    max_positive_objects_per_image: ${scratch.max_num_objects}
     target_point_classifier: true
     negative_points_per_image: ${scratch.negative_points_per_image}
     negative_grid_size: ${scratch.target_point_grid_size}
@@ -187,7 +189,7 @@ trainer:
     ####### Training specific params #######
     # box/point input and corrections
     prob_to_use_pt_input_for_train: 1.0
-    prob_to_use_pt_input_for_eval: 0.0
+    prob_to_use_pt_input_for_eval: 1.0
     prob_to_use_box_input_for_train: 0.0
     prob_to_use_box_input_for_eval: 0.0
     prob_to_sample_from_gt_for_train: 0.1  # with a small prob, sampling correction points from GT mask instead of prediction errors
@@ -272,6 +274,12 @@ trainer:
             end_value: ${divide:${scratch.vision_lr},10}
           param_names:
             - 'image_encoder.*'
+        - scheduler:
+            _target_: fvcore.common.param_scheduler.CosineParamScheduler
+            start_value: ${scratch.target_point_lr}
+            end_value: ${divide:${scratch.target_point_lr},10}
+          param_names:
+            - target_point_classifier.*
       weight_decay:
         - scheduler:
             _target_: fvcore.common.param_scheduler.ConstantParamScheduler
@@ -287,7 +295,7 @@ trainer:
     all:
       _target_: training.loss_fns.MultiStepMultiMasksAndIous
       weight_dict:
-        loss_mask: 20
+        loss_mask: 10
         loss_dice: 1
         loss_iou: 1
         loss_class: 1
