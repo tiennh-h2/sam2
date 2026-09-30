@@ -199,7 +199,9 @@ def sample_box_points(
     return box_coords, box_labels
 
 
-def sample_random_points_from_errors(gt_masks, pred_masks, num_pt=1):
+def sample_random_points_from_errors(
+    gt_masks, pred_masks, num_pt=1, sample_all_correct_region=True,
+):
     """
     Sample `num_pt` random points (along with their labels) independently from the error regions.
 
@@ -207,6 +209,10 @@ def sample_random_points_from_errors(gt_masks, pred_masks, num_pt=1):
     - gt_masks: [B, 1, H_im, W_im] masks, dtype=torch.bool
     - pred_masks: [B, 1, H_im, W_im] masks, dtype=torch.bool or None
     - num_pt: int, number of points to sample independently for each of the B error maps
+    - sample_all_correct_region: bool. If True, ignore FP/FN error regions entirely and
+      sample every point uniformly from inside the ground-truth foreground (gt_masks),
+      always labeled positive (1). If False (default), sample from FP/FN error regions
+      as usual, falling back to a negative background click when there's no error.
 
     Outputs:
     - points: [B, num_pt, 2], dtype=torch.float, contains (x, y) coordinates of each sampled point
@@ -222,6 +228,16 @@ def sample_random_points_from_errors(gt_masks, pred_masks, num_pt=1):
     B, _, H_im, W_im = gt_masks.shape
     device = gt_masks.device
 
+    if sample_all_correct_region:
+        noise = torch.rand(B, num_pt, H_im, W_im, device=device)
+        noise = noise * gt_masks  # zero out everything outside the gt foreground
+        pts_idx = noise.flatten(2).argmax(dim=2)
+        pts_x = pts_idx % W_im
+        pts_y = pts_idx // W_im
+        points = torch.stack([pts_x, pts_y], dim=2).to(torch.float)
+        labels = torch.ones(B, num_pt, dtype=torch.int32, device=device)
+        return points, labels
+
     # false positive region, a new point sampled in this region should have
     # negative label to correct the FP error
     fp_masks = ~gt_masks & pred_masks
@@ -232,12 +248,7 @@ def sample_random_points_from_errors(gt_masks, pred_masks, num_pt=1):
     all_correct = torch.all((gt_masks == pred_masks).flatten(2), dim=2)
     all_correct = all_correct[..., None, None]
 
-    # channel 0 is FP map, while channel 1 is FN map
     pts_noise = torch.rand(B, num_pt, H_im, W_im, 2, device=device)
-    # sample a negative new click from FP region or a positive new click
-    # from FN region, depend on where the maximum falls,
-    # and in case the predictions are all correct (no FP or FN), we just
-    # sample a negative click from the background region
     pts_noise[..., 0] *= fp_masks | (all_correct & ~gt_masks)
     pts_noise[..., 1] *= fn_masks
     pts_idx = pts_noise.flatten(2).argmax(dim=2)
