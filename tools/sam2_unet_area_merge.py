@@ -23,9 +23,14 @@ Outputs: evaluation/images/{metrics.json,per_image.csv,per_image.json,worst_firs
 Each row includes Dice/IoU, AP/AR, P/R/F1 at all thresholds, and TP/FP/FN counts.
 Tile rows also contain source-image names and x0/y0/x1/y1. Worst-first order is
 ascending F1_0.5, then IoU. Both levels export COCO GT/predictions and run settings.
+Within each tile: union duplicate raw masks at mask IoU >= --tile-mask-merge-iou
+(default 0.8), retaining the highest predicted_iou. Save merged tile outputs.
 Tile merge: one-to-one largest-intersection matching within actual shared regions.
 --merge-overlap-iou is retained for compatibility and ignored.
 Ground truth is used only for evaluation; the original UNet-gated inference is retained.
+Final merged image instance masks are always saved to
+instances/<source filename>/00001.png (full image size, L mode, 0/255),
+with instances.json recording IDs, scores, and areas.
 Requires pycocotools for evaluation. See --help for all options.
 """
 import argparse
@@ -176,6 +181,27 @@ def merge_tile_predictions(predictions: list[TilePrediction], image_hw: tuple[in
     return labels, scores
 
 
+def save_image_instance_masks(labels, scores, folder):
+    """Save visible final instances as full-image L-mode binary PNGs."""
+    ids = np.unique(labels[labels != 0]).tolist()
+    if any(instance_id < 1 or instance_id > len(scores) for instance_id in ids):
+        raise ValueError('Final instance IDs must map to scores[instance_id - 1]')
+    folder.mkdir(parents=True, exist_ok=True)
+    # Remove only masks owned by this exporter when rerunning an image.
+    for path in folder.iterdir():
+        if path.is_file() and re.fullmatch(r'\d{5}\.png', path.name):
+            path.unlink()
+    records = []
+    for instance_id in ids:
+        mask = labels == instance_id
+        filename = f'{instance_id:05d}.png'
+        Image.fromarray(mask.astype(np.uint8) * 255).save(folder / filename)
+        records.append(dict(instance_id=int(instance_id),
+                            predicted_iou=float(scores[instance_id - 1]),
+                            area=int(mask.sum()), mask_file=filename))
+    (folder / 'instances.json').write_text(json.dumps(records, indent=2))
+
+
 def make_overlay(image: np.ndarray, labels: np.ndarray, alpha: float = 0.45):
     palette = np.zeros((int(labels.max()) + 1, 3), dtype=np.uint8)
     for instance_id in range(1, len(palette)):
@@ -311,8 +337,60 @@ def select_unet_items(items, skip_existing):
     return [item for item in items if not (skip_existing and cached_probability_valid(item))]
 
 
-def save_tile_instances(tile, annotations, folder, box, dump_masks=False):
-    """Always save one overlay per instance, preserving overlapping raw masks."""
+def merge_tile_instance_masks(annotations, iou_threshold=0.8):
+    """Union near-duplicate binary masks around each highest-score original mask.
+
+    Compare candidates against the original seed, not the growing union, to avoid
+    transitive overlap chains joining distinct objects. Input masks are unmodified.
+    Non-mask metadata (including prompt coordinates) comes from the best seed.
+    """
+    if not np.isfinite(iou_threshold) or not 0 < iou_threshold <= 1:
+        raise ValueError('Tile mask merge IoU must be in (0, 1]')
+    pending = []
+    shape = None
+    for ann in sorted(annotations, key=lambda ann: ann['predicted_iou'], reverse=True):
+        mask = np.asarray(ann['segmentation'], dtype=bool)
+        if mask.ndim != 2 or (shape is not None and mask.shape != shape):
+            raise ValueError('Tile instance masks must have the same HxW shape')
+        shape = mask.shape
+        area = int(np.count_nonzero(mask))
+        if area:
+            ys, xs = np.nonzero(mask)
+            bounds = (int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
+            pending.append((ann, mask, area, bounds))
+    result = []
+    while pending:
+        seed_ann, seed, seed_area, seed_box = pending.pop(0)
+        union_mask = seed.copy()
+        remaining = []
+        for ann, mask, area, bounds in pending:
+            # Intersection is zero outside the common foreground bounding box.
+            x0, y0 = max(seed_box[0], bounds[0]), max(seed_box[1], bounds[1])
+            x1, y1 = min(seed_box[2], bounds[2]), min(seed_box[3], bounds[3])
+            if x0 >= x1 or y0 >= y1:
+                remaining.append((ann, mask, area, bounds))
+                continue
+            intersection = int(np.count_nonzero(seed[y0:y1, x0:x1] & mask[y0:y1, x0:x1]))
+            iou = intersection / (seed_area + area - intersection)
+            if iou >= iou_threshold:
+                union_mask |= mask
+            else:
+                remaining.append((ann, mask, area, bounds))
+        pending = remaining
+        merged = dict(seed_ann)
+        merged['segmentation'] = union_mask
+        merged['area'] = int(np.count_nonzero(union_mask))
+        ys, xs = np.nonzero(union_mask)
+        merged['bbox'] = [int(xs.min()), int(ys.min()),
+                          int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1)]
+        result.append(merged)
+    return result
+
+
+def save_tile_instances(tile, annotations, folder, box, dump_masks=False,
+                        tile_mask_merge_iou=0.8):
+    """Merge tile duplicates, then save one overlay and optional mask per instance."""
+    annotations = merge_tile_instance_masks(annotations, tile_mask_merge_iou)
     mask_dir = folder / 'instances'
     mask_dir.mkdir(parents=True, exist_ok=True)
     # Remove only files this function owns, so a rerun with fewer masks cannot
@@ -871,20 +949,24 @@ def run(args):
                     generator.point_grids = [retained]  # MUST refresh for each tile.
                     anns = generator.generate(tile)
                 tile_labels, tile_predictions, records = save_tile_instances(
-                    tile, anns, folder, box, dump_masks=args.dump_instance_masks)
+                    tile, anns, folder, box, dump_masks=args.dump_instance_masks,
+                    tile_mask_merge_iou=args.tile_mask_merge_iou)
                 predictions.extend(tile_predictions)
                 Image.fromarray(tile_labels).save(folder / 'labels.png')
                 Image.fromarray(make_overlay(tile, tile_labels)).save(item['overlay'])
                 (folder / 'instances.json').write_text(json.dumps(records, indent=2))
                 row = {'image': str(path), 'tile_index': item['index'], 'box': list(box),
-                       'total_points': len(grid), 'retained_points': len(retained), 'masks': len(anns)}
+                       'total_points': len(grid), 'retained_points': len(retained),
+                       'raw_masks': len(anns), 'masks': len(records)}
                 summary.append(row)
                 print(f'{path.name}: tile {item["index"]}/{item["tile_count"]}, '
-                      f'points {len(retained)}/{len(grid)}, {len(anns)} masks', flush=True)
+                      f'points {len(retained)}/{len(grid)}, {len(anns)} raw masks -> '
+                      f'{len(records)} tile instances', flush=True)
             # Merge tile instances by largest foreground intersection in shared regions.
             labels, scores = merge_tile_predictions(predictions, (h, w),
                                                     args.merge_overlap_iou, args.min_overlap_pixels)
             relative = path.relative_to(args.img_dir)
+            save_image_instance_masks(labels, scores, args.output_dir / 'instances' / relative)
             relative = relative.with_name(relative.name + '.png')
             label_path = args.output_dir / 'labels' / relative
             overlay_path = args.output_dir / 'overlays' / relative
@@ -903,9 +985,9 @@ def run(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--checkpoint', default="/data1/workspace/tien.nguyen/project/sam2/sam2_logs/configs/sam2.1_training/sam2.1_hiera_b+_FBM_no_backout_finetune_sahi_positive_points_with_eval.yaml/checkpoints/checkpoint_best_ap.pt", type=Path, help='Your SAM2 checkpoint')
+    parser.add_argument('--checkpoint', default="/data1/workspace/tien.nguyen/project/sam2/sam2_logs/configs/sam2.1_training/sam2.1_hiera_b+_FBM_no_backout_finetune_sahi_positive_empty_points_with_eval.yaml/checkpoints/checkpoint_best_ap.pt", type=Path, help='Your SAM2 checkpoint')
     parser.add_argument('--unet-repo', default="/data1/workspace/tien.nguyen/project/org-ais-models/primus/segmentation/SAM2-UNet/src/models", type=Path, help='Separate SAM2-UNet checkout, e.g. ../SAM2-UNet')
-    parser.add_argument('--unet-checkpoint', default="/data1/workspace/tien.nguyen/project/sam2/SAM2-UNet_epoch-182_loss-0.616_iou-0.762_score-0.794.pth", type=Path, help='Target-trained SAM2-UNet state_dict')
+    parser.add_argument('--unet-checkpoint', default="/data1/workspace/tien.nguyen/project/org-ais-models/primus/segmentation/specialty_experiment_1024_2/SAM2-UNet_epoch-57_loss-1.011_iou-0.783_score-0.835.pth", type=Path, help='Target-trained SAM2-UNet state_dict')
     parser.add_argument('--unet-size', type=int, default=1024, help='Match your UNet training resolution')
     parser.add_argument('--img-dir', default="/data1/workspace/ai_shared_workspace/young_team_results/sam3_v0930/sam3_v260929_specialty_only_no_backout_full/test/", type=Path)
     parser.add_argument('--output-dir', default="outputs_with_sam2_unet_latest_checkpoint_20260110_0900_no_backout_new_merge", type=Path, help='Output directory; use --skip-existing to resume')
@@ -921,14 +1003,16 @@ def main():
     parser.add_argument('--target-point-classifier', action='store_true',
                         help='Instantiate the custom classifier head to match your SAM2 training checkpoint')
     parser.add_argument('--pred-iou-threshold', type=float, default=0.8)
-    parser.add_argument('--stability-threshold', type=float, default=0.9)
+    parser.add_argument('--stability-threshold', type=float, default=0.8)
     parser.add_argument('--box-nms-threshold', type=float, default=0.7)
+    parser.add_argument('--tile-mask-merge-iou', type=float, default=0.25,
+                        help='Union duplicate raw masks within each tile at mask IoU >= this value (0, 1]')
     parser.add_argument('--merge-overlap-iou', type=float, default=0.6,
                         help='Legacy compatibility option; ignored by area-based matching')
     parser.add_argument('--min-overlap-pixels', type=int, default=64,
                         help='Minimum shared foreground pixels for a tile instance match')
     parser.add_argument('--dump-instance-masks', action='store_true',
-                        help='Also save binary masks; individual instance overlays are always saved')
+                        help='Also save tile binary masks; final image binary masks and tile instance overlays are always saved')
     parser.add_argument('--skip-existing', action='store_true',
                         help='Reuse existing tile folders and valid UNet .npy files; rerun SAM2 and debug outputs')
     evaluation = parser.add_mutually_exclusive_group()
@@ -979,6 +1063,8 @@ def main():
         parser.error('Tile, grid, batch, and minimum counts must be positive')
     if not 0 <= args.overlap < 1:
         parser.error('--overlap must be in [0, 1)')
+    if not 0 < args.tile_mask_merge_iou <= 1:
+        parser.error('--tile-mask-merge-iou must be in (0, 1]')
     if args.unet_size < 32 or args.unet_size % 32:
         parser.error('--unet-size must be a positive multiple of 32')
     for name in ('foreground_threshold', 'pred_iou_threshold', 'stability_threshold', 'box_nms_threshold', 'merge_overlap_iou'):

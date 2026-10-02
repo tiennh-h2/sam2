@@ -50,6 +50,9 @@ class BatchedVideoDatapoint:
     metadata: BatchedVideoMetaData
 
     dict_key: str
+    # Optional explicit prompts: [T, O, 1, 2] and [T, O, 1].
+    point_coords: Optional[torch.FloatTensor] = None
+    point_labels: Optional[torch.IntTensor] = None
 
     def pin_memory(self, device=None):
         return self.apply(torch.Tensor.pin_memory, device=device)
@@ -94,6 +97,8 @@ class Object:
     # Index of the frame in the media (0 if single image)
     frame_index: int
     segment: Union[torch.Tensor, dict]  # RLE dict or binary mask
+    point_coords: Optional[Tuple[int, int]] = None
+    point_label: int = 1
 
 
 @dataclass
@@ -131,6 +136,15 @@ def collate_fn(
     step_t_frame_orig_size = [[] for _ in range(T)]
 
     step_t_masks = [[] for _ in range(T)]
+    step_t_points = [[] for _ in range(T)]
+    step_t_labels = [[] for _ in range(T)]
+    has_explicit_points = [
+        obj.point_coords is not None
+        for video in batch for frame in video.frames for obj in frame.objects
+    ]
+    if any(has_explicit_points) and not all(has_explicit_points):
+        raise ValueError("Cannot mix explicit and implicit point prompts in one batch")
+    use_explicit_points = bool(has_explicit_points) and all(has_explicit_points)
     step_t_obj_to_frame_idx = [
         [] for _ in range(T)
     ]  # List to store frame indices for each time step
@@ -147,6 +161,9 @@ def collate_fn(
                     torch.tensor([t, video_idx], dtype=torch.int)
                 )
                 step_t_masks[t].append(obj.segment.to(torch.bool))
+                if use_explicit_points:
+                    step_t_points[t].append([obj.point_coords])
+                    step_t_labels[t].append([obj.point_label])
                 step_t_objects_identifier[t].append(
                     torch.tensor([orig_video_id, orig_obj_id, orig_frame_idx])
                 )
@@ -175,5 +192,9 @@ def collate_fn(
             frame_orig_size=frame_orig_size,
         ),
         dict_key=dict_key,
+        point_coords=(torch.tensor(step_t_points, dtype=torch.float32)
+                      if use_explicit_points else None),
+        point_labels=(torch.tensor(step_t_labels, dtype=torch.int32)
+                      if use_explicit_points else None),
         batch_size=[T],
     )

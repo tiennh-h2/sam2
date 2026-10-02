@@ -34,11 +34,18 @@ class VOSDataset(VisionDataset):
         multiplier: int,
         always_target=True,
         target_segments_available=True,
+        point_sampler=None,
     ):
         self._transforms = transforms
         self.training = training
         self.video_dataset = video_dataset
         self.sampler = sampler
+        self.point_sampler = point_sampler
+        if point_sampler is not None:
+            if not training or not getattr(sampler, "defer_object_limit", False):
+                raise ValueError("point_sampler requires training=True and defer_object_limit=True")
+        elif getattr(sampler, "defer_object_limit", False):
+            raise ValueError("defer_object_limit requires a post-transform point_sampler")
 
         self.repeat_factors = torch.ones(len(self.video_dataset), dtype=torch.float32)
         self.repeat_factors *= multiplier
@@ -60,9 +67,16 @@ class VOSDataset(VisionDataset):
                 sampled_frms_and_objs = self.sampler.sample(
                     video, segment_loader, epoch=self.curr_epoch
                 )
-                break  # Succesfully loaded video
+                datapoint = self.construct(video, sampled_frms_and_objs, segment_loader)
+                for transform in self._transforms:
+                    datapoint = transform(datapoint, epoch=self.curr_epoch)
+                if self.point_sampler is not None:
+                    datapoint = self.point_sampler(datapoint)
+                return datapoint
             except Exception as e:
                 if self.training:
+                    if retry == MAX_RETRIES - 1:
+                        raise RuntimeError("Could not load a valid training datapoint") from e
                     logging.warning(
                         f"Loading failed (id={idx}); Retry {retry} with exception: {e}"
                     )
@@ -71,10 +85,6 @@ class VOSDataset(VisionDataset):
                     # Shouldn't fail to load a val video
                     raise e
 
-        datapoint = self.construct(video, sampled_frms_and_objs, segment_loader)
-        for transform in self._transforms:
-            datapoint = transform(datapoint, epoch=self.curr_epoch)
-        return datapoint
 
     def construct(self, video, sampled_frms_and_objs, segment_loader):
         """

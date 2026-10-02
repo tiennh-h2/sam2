@@ -162,6 +162,16 @@ class SAM2Train(SAM2Base):
         backbone_out["gt_masks_per_frame"] = gt_masks_per_frame
         num_frames = input.num_frames
         backbone_out["num_frames"] = num_frames
+        explicit_points = getattr(input, "point_coords", None)
+        explicit_labels = getattr(input, "point_labels", None)
+        if explicit_points is not None:
+            if not self.training or num_frames != 1 or self.num_correction_pt_per_frame != 0:
+                raise ValueError("Explicit independent points require single-frame training with no correction clicks")
+            expected_shape = (*input.masks.shape[:2], 1, 2)
+            if explicit_points.shape != expected_shape or explicit_labels is None:
+                raise ValueError("Explicit point coordinates must have shape [T, O, 1, 2]")
+            if explicit_labels.shape != expected_shape[:-1] or not (explicit_labels == 1).all():
+                raise ValueError("Explicit independent prompts must all have label 1")
 
         # Randomly decide whether to use point inputs or mask inputs
         if self.training:
@@ -227,7 +237,9 @@ class SAM2Train(SAM2Base):
             else:
                 # During training # P(box) = prob_to_use_pt_input * prob_to_use_box_input
                 use_box_input = self.rng.random() < prob_to_use_box_input
-                if use_box_input:
+                if explicit_points is not None:
+                    points, labels = explicit_points[t], explicit_labels[t]
+                elif use_box_input:
                     points, labels = sample_box_points(
                         gt_masks_per_frame[t],
                     )

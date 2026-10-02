@@ -134,6 +134,7 @@ class MultiStepMultiMasksAndIous(nn.Module):
         pred_obj_scores=False,
         focal_gamma_obj_score=0.0,
         focal_alpha_obj_score=-1,
+        supervise_empty_masks=False,
     ):
         """
         This class computes the multi-step multi-mask and IoU losses.
@@ -163,6 +164,7 @@ class MultiStepMultiMasksAndIous(nn.Module):
         self.supervise_all_iou = supervise_all_iou
         self.iou_use_l1_loss = iou_use_l1_loss
         self.pred_obj_scores = pred_obj_scores
+        self.supervise_empty_masks = supervise_empty_masks
 
     def forward(self, outs_batch: List[Dict], targets_batch: torch.Tensor):
         assert len(outs_batch) == len(targets_batch)
@@ -285,10 +287,18 @@ class MultiStepMultiMasksAndIous(nn.Module):
             loss_dice = loss_multidice
             loss_iou = loss_multiiou
 
-        # backprop focal, dice and iou loss only if obj present
-        loss_mask = loss_mask * target_obj
-        loss_dice = loss_dice * target_obj
-        loss_iou = loss_iou * target_obj
+        if self.supervise_empty_masks:
+            # Every candidate must be empty for a background prompt. Averaging
+            # supervises all candidates without multiplying the sample's weight.
+            is_empty = ~target_masks[:, 0].bool().flatten(1).any(dim=1, keepdim=True)
+            loss_mask = torch.where(is_empty, loss_multimask.mean(1, keepdim=True), loss_mask)
+            loss_dice = torch.where(is_empty, loss_multidice.mean(1, keepdim=True), loss_dice)
+            loss_iou = torch.where(is_empty, loss_multiiou.mean(1, keepdim=True), loss_iou)
+        else:
+            # Original video-training behavior: supervise masks only if present.
+            loss_mask = loss_mask * target_obj
+            loss_dice = loss_dice * target_obj
+            loss_iou = loss_iou * target_obj
 
         # sum over batch dimension (note that the losses are already divided by num_objects)
         losses["loss_mask"] += loss_mask.sum()

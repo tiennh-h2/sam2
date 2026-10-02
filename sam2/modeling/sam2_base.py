@@ -93,6 +93,7 @@ class SAM2Base(torch.nn.Module):
         # extra arguments used to construct the SAM mask decoder; if not None, it should be a dict of kwargs to be passed into `MaskDecoder` class.
         sam_mask_decoder_extra_args=None,
         compile_image_encoder: bool = False,
+        suppress_no_object_masks_during_training: bool = True,
     ):
         super().__init__()
 
@@ -163,6 +164,9 @@ class SAM2Base(torch.nn.Module):
         self.backbone_stride = backbone_stride
         self.sam_mask_decoder_extra_args = sam_mask_decoder_extra_args
         self.pred_obj_scores = pred_obj_scores
+        # Disable in positive/empty-target training so mask losses see raw logits.
+        # Evaluation retains the original object-presence gate.
+        self.suppress_no_object_masks_during_training = suppress_no_object_masks_during_training
         self.pred_obj_scores_mlp = pred_obj_scores_mlp
         self.fixed_no_obj_ptr = fixed_no_obj_ptr
         self.soft_no_obj_ptr = soft_no_obj_ptr
@@ -361,11 +365,12 @@ class SAM2Base(torch.nn.Module):
 
             # Mask used for spatial memories is always a *hard* choice between obj and no obj,
             # consistent with the actual mask prediction
-            low_res_multimasks = torch.where(
-                is_obj_appearing[:, None, None],
-                low_res_multimasks,
-                NO_OBJ_SCORE,
-            )
+            if not self.training or self.suppress_no_object_masks_during_training:
+                low_res_multimasks = torch.where(
+                    is_obj_appearing[:, None, None],
+                    low_res_multimasks,
+                    NO_OBJ_SCORE,
+                )
 
         # convert masks from possibly bfloat16 (or float16) to float32
         # (older PyTorch versions before 2.1 don't support `interpolate` on bf16)

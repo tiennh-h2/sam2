@@ -34,10 +34,14 @@ class RandomUniformSampler(VOSSampler):
         num_frames,
         max_num_objects,
         reverse_time_prob=0.0,
+        defer_object_limit=False,
     ):
         self.num_frames = num_frames
         self.max_num_objects = max_num_objects
         self.reverse_time_prob = reverse_time_prob
+        self.defer_object_limit = defer_object_limit
+        if defer_object_limit and num_frames != 1:
+            raise ValueError("Deferred point sampling requires num_frames=1")
 
     def sample(self, video, segment_loader, epoch=None):
 
@@ -71,9 +75,11 @@ class RandomUniformSampler(VOSSampler):
             if retry >= MAX_RETRIES - 1:
                 raise Exception("No visible objects")
 
-        object_ids = random.sample(
-            visible_object_ids,
-            min(len(visible_object_ids), self.max_num_objects),
+        object_ids = (
+            visible_object_ids if self.defer_object_limit else random.sample(
+                visible_object_ids,
+                min(len(visible_object_ids), self.max_num_objects),
+            )
         )
         return SampledFramesAndObjects(frames=frames, object_ids=object_ids)
 
